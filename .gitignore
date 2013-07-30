@@ -10,8 +10,10 @@
 *.so
 *.so.*
 *.dylib
-
+.DS_Store
+.DS_Store?
 # Executables
 *.exe
 *.out
 *.app
+nbproject

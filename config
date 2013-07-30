@@ -1,0 +1,1 @@
+(cd nginx && ./configure --add-module=../src/modules/socks --with-ipv6 --with-debug)
