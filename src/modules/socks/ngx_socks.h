@@ -146,6 +146,24 @@ typedef enum {
     ngx_socks_state_auth_plain,
     ngx_socks_state_request
 } ngx_socks_state_e;
+    
+typedef enum {
+    ngx_socks_auth_start=0,
+    ngx_socks_auth_password=1,
+} ngx_socks_auth_state_e;
+
+typedef struct {
+    u_char version;
+    u_char method;
+} ngx_socks_auth_method_response_t;
+
+typedef struct {
+    u_char version;
+    u_char response_code;
+    u_char reserved;
+    u_char address_type;
+    u_char bind_address[];
+} ngx_socks_request_response_t;
 
 typedef struct {
     ngx_peer_connection_t upstream;
@@ -153,22 +171,39 @@ typedef struct {
 } ngx_socks_proxy_ctx_t;
 
 typedef struct {
+    ngx_chain_t *chains;
+    ngx_chain_t *free_chains;
+    ngx_pool_t *pool;
+} ngx_socks_buf_chain_t;
+
+ngx_chain_t* ngx_socks_alloc_chain(ngx_socks_buf_chain_t *chains){
+    return NULL;
+}
+
+typedef struct {
     uint32_t signature; /* "MAIL" */
 
     ngx_connection_t *connection;
 
+    ngx_socks_buf_chain_t in_buf_chain;
+    
+    ngx_output_chain_ctx_t output_ctx;
+    
     ngx_str_t out;
     ngx_buf_t *buffer;
+    ngx_chain_t *out_chain;
 
     void **ctx;
     void **main_conf;
     void **srv_conf;
+    ngx_pool_t *pool;
 
     ngx_resolver_ctx_t *resolver_ctx;
 
     ngx_socks_proxy_ctx_t *proxy;
 
     ngx_uint_t socks_state;
+    ngx_uint_t auth_state;
 
     unsigned protocol : 3;
     unsigned blocked : 1;
@@ -178,9 +213,10 @@ typedef struct {
     unsigned no_sync_literal : 1;
     unsigned starttls : 1;
     unsigned esmtp : 1;
-    unsigned auth_method : 3;
+    
     unsigned auth_wait : 1;
 
+    u_char auth_method;
     ngx_str_t login;
     ngx_str_t passwd;
 
@@ -201,7 +237,6 @@ typedef struct {
     ngx_uint_t login_attempt;
 
     /* used to parse POP3/IMAP/SMTP command */
-
     ngx_uint_t state;
     u_char *cmd_start;
     u_char *arg_start;
@@ -223,7 +258,7 @@ typedef ngx_int_t(*ngx_socks_parse_command_pt)(ngx_socks_session_t *s);
 
 struct ngx_socks_protocol_s {
     ngx_str_t name;
-    in_port_t port[4];
+    in_port_t port[7];
     ngx_uint_t type;
 
     ngx_socks_init_session_pt init_session;
@@ -240,8 +275,8 @@ struct ngx_socks_protocol_s {
 #define NGX_SOCKS_MAIN_CONF      0x02000000
 #define NGX_SOCKS_SRV_CONF       0x04000000
 
-#define NGX_SOCKS_V4_PROTOCOL      0
-#define NGX_SOCKS_V5_PROTOCOL      1
+#define NGX_SOCKS_V4      0
+#define NGX_SOCKS_V5      1
 
 #define NGX_SOCKS_PARSE_INVALID_COMMAND  20
 

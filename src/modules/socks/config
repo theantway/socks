@@ -1,3 +1,3 @@
 ngx_addon_name=socks
-SOCKS_MODULES="$SOCKS_MODULES ngx_socks_module ngx_socks_core_module"
-NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_socks_handler.c $ngx_addon_dir/ngx_socks_core_module.c $ngx_addon_dir/ngx_socks.c"
+SOCKS_MODULES="$SOCKS_MODULES ngx_socks_module ngx_socks_core_module ngx_socks_v5_module"
+NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_socks_parse.c $ngx_addon_dir/ngx_socks_v5_handler.c $ngx_addon_dir/ngx_socks_v5_module.c $ngx_addon_dir/ngx_socks_handler.c $ngx_addon_dir/ngx_socks_core_module.c $ngx_addon_dir/ngx_socks.c"

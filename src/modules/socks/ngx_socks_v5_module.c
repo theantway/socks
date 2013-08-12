@@ -9,8 +9,8 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_event.h>
-#include <ngx_socks.h>
-#include <ngx_socks_v5_module.h>
+#include "ngx_socks.h"
+#include "ngx_socks_v5_module.h"
 
 static void *ngx_socks_v5_create_srv_conf(ngx_conf_t *cf);
 static char *ngx_socks_v5_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
@@ -53,19 +53,19 @@ static ngx_command_t ngx_socks_v5_commands[] = {
         offsetof(ngx_socks_v5_srv_conf_t, client_buffer_size),
         NULL},
 
-    { ngx_string("v5_greeting_delay"),
-        NGX_MAIL_MAIN_CONF | NGX_MAIL_SRV_CONF | NGX_CONF_TAKE1,
-        ngx_conf_set_msec_slot,
-        NGX_MAIL_SRV_CONF_OFFSET,
-        offsetof(ngx_socks_v5_srv_conf_t, greeting_delay),
-        NULL},
-
-    { ngx_string("v5_capabilities"),
-        NGX_MAIL_MAIN_CONF | NGX_MAIL_SRV_CONF | NGX_CONF_1MORE,
-        ngx_socks_capabilities,
-        NGX_MAIL_SRV_CONF_OFFSET,
-        offsetof(ngx_socks_v5_srv_conf_t, capabilities),
-        NULL},
+//    { ngx_string("v5_greeting_delay"),
+//        NGX_MAIL_MAIN_CONF | NGX_MAIL_SRV_CONF | NGX_CONF_TAKE1,
+//        ngx_conf_set_msec_slot,
+//        NGX_MAIL_SRV_CONF_OFFSET,
+//        offsetof(ngx_socks_v5_srv_conf_t, greeting_delay),
+//        NULL},
+//
+//    { ngx_string("v5_capabilities"),
+//        NGX_MAIL_MAIN_CONF | NGX_MAIL_SRV_CONF | NGX_CONF_1MORE,
+//        ngx_socks_capabilities,
+//        NGX_MAIL_SRV_CONF_OFFSET,
+//        offsetof(ngx_socks_v5_srv_conf_t, capabilities),
+//        NULL},
 
     { ngx_string("v5_auth"),
         NGX_MAIL_MAIN_CONF | NGX_MAIL_SRV_CONF | NGX_CONF_1MORE,
@@ -93,7 +93,7 @@ ngx_module_t ngx_socks_v5_module = {
     NGX_MODULE_V1,
     &ngx_socks_v5_module_ctx, /* module context */
     ngx_socks_v5_commands, /* module directives */
-    NGX_MAIL_MODULE, /* module type */
+    NGX_SOCKS_MODULE, /* module type */
     NULL, /* init master */
     NULL, /* init module */
     NULL, /* init process */

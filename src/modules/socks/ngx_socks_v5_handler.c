@@ -1,8 +1,15 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_event.h>
+#include <ngx_string.h>
 #include "ngx_socks.h"
 #include "ngx_socks_v5_module.h"
+
+void ngx_socks_v5_handle_client_request(ngx_event_t *rev);
+ngx_int_t ngx_socks_v5_request(ngx_event_t *rev);
+static void ngx_socks_5_proxy_handler(ngx_event_t *rev);
+static void ngx_socks_proxy_dummy_write(ngx_event_t *rev);
+static void ngx_socks_proxy_block_read(ngx_event_t *rev);
 
 static void ngx_socks_v5_resolve_addr_handler(ngx_resolver_ctx_t *ctx);
 static void ngx_socks_v5_resolve_name(ngx_event_t *rev);
@@ -44,12 +51,14 @@ ngx_socks_v5_init_session(ngx_socks_session_t *s, ngx_connection_t *c) {
     struct sockaddr_in *sin;
     ngx_resolver_ctx_t *ctx;
     ngx_socks_core_srv_conf_t *cscf;
+    s->pool = ngx_create_pool(1024, c->log);
 
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
 
     if (cscf->resolver == NULL) {
         s->host = socks5_unavailable;
         ngx_socks_v5_greeting(s, c);
+        //wait for client send initial request for auth methods
         return;
     }
 
@@ -326,9 +335,10 @@ ngx_socks_v5_init_protocol(ngx_event_t *rev) {
     }
 
     s->socks_state = ngx_smtp_start;
-    c->read->handler = ngx_socks_v5_auth_state;
+    c->read->handler = ngx_socks_v5_handle_client_request;
+    s->protocol = NGX_SOCKS_V5;
 
-    ngx_socks_v5_auth_state(rev);
+    ngx_socks_v5_handle_client_request(rev);
 }
 
 static ngx_int_t
@@ -350,6 +360,368 @@ ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c) {
 
     return NGX_OK;
 }
+char* char2hex(char c, char* hex) {
+    const char* hex_symbols = "0123456789ABCDEF";
+
+    hex[0] = *(hex_symbols + ((c & 0xF0) >> 4));
+    hex[1] = *(hex_symbols + (c & 0x0F));
+
+    return hex;
+}
+
+static char supported_auth_methods[] = {
+    0x00, /*'00' NO AUTHENTICATION REQUIRED*/
+    0x01, /*'01' GSSAPI*/
+    0x02, /*'02' USERNAME / PASSWORD */
+    /*'03' to X'7F' IANA ASSIGNED
+      '80' to X'FE' RESERVED FOR PRIVATE METHODS
+     */
+    0xFF /*'FF' NO ACCEPTABLE METHODS*/
+};
+
+ngx_int_t ngx_socks_v5_response_auth_methods(ngx_socks_session_t *s) {
+    u_char nmethod;
+    char hexMethod[2];
+
+    //only the first two bytes
+    if (s->buffer->last > s->buffer->pos) {
+        if (*(s->buffer->pos) != 0x05) {
+            return NGX_SOCKS_PARSE_INVALID_COMMAND;
+        }
+    }
+
+    if (s->buffer->last - s->buffer->pos + 1 <= 2) {
+        return NGX_AGAIN;
+    }
+
+    u_char nmethods = *(s->buffer->pos + 1);
+
+    if (s->buffer->last - s->buffer->pos + 1 < 2 + nmethods) {
+        return NGX_AGAIN;
+    }
+
+    //choose the auth methods in order: no auth, GSSAPI, USER/PWD
+    for (nmethod = 0; nmethod < sizeof (supported_auth_methods); nmethod++) {
+        ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "checking auth method: '%*s'", 2, char2hex(supported_auth_methods[nmethod], hexMethod));
+        for (size_t method = 0; method < nmethods; method++) {
+            if (*(s->buffer->pos + 2 + method) == supported_auth_methods[nmethod]) {
+                ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "Found matched method at %uz: '%*s'", nmethod, 2, char2hex(supported_auth_methods[nmethod], hexMethod));
+                s->auth_method = supported_auth_methods[nmethod];
+                ngx_buf_t* buf = ngx_create_temp_buf(s->pool, sizeof(ngx_socks_auth_method_response_t));
+                ngx_socks_auth_method_response_t* response = (ngx_socks_auth_method_response_t*)buf->pos;
+                response->version = 5;
+                response->method = s->auth_method;
+                buf->last += sizeof (ngx_socks_auth_method_response_t); 
+                
+                ngx_chain_t *new_chain = ngx_alloc_chain_link(s->pool);
+                new_chain->next = NULL;
+                new_chain->buf = buf;
+                
+                ngx_chain_t* last_chain = s->out_chain;
+                if(last_chain != NULL) {
+                    while (last_chain->next != NULL) {
+                        last_chain = last_chain->next;
+                    }
+                    
+                    last_chain->next = new_chain;
+                    last_chain->buf->last_in_chain = 0;
+                } else {
+                    s->out_chain = new_chain;
+                }
+                
+                return NGX_DONE;
+            }
+        }
+    }
+
+    return NGX_OK;
+}
+
+void ngx_socks_v5_handle_client_request(ngx_event_t *rev) {
+    ngx_connection_t *c;
+    ngx_socks_session_t *s;
+
+    c = rev->data;
+    s = c->data;
+
+    switch(s->socks_state){
+        case ngx_socks_state_start:
+            ngx_socks_v5_auth_state(rev);
+            break;
+        case ngx_socks_state_request:
+            ngx_socks_v5_request(rev);
+            break;
+        default:
+            break;
+    }
+}
+
+ngx_int_t ngx_socks5_parse_addr(ngx_connection_t *connection, ngx_addr_t *addr, u_char *text, u_char address_type) {
+    struct in_addr inaddr;
+    ngx_uint_t family = 0;
+    ngx_int_t rc;
+    ngx_int_t len;
+    struct sockaddr_in *sin;
+#if (NGX_HAVE_INET6)
+    struct in6_addr inaddr6;
+    struct sockaddr_in6 *sin6;
+
+    /*
+     * prevent MSVC8 warning:
+     *    potentially uninitialized local variable 'inaddr6' used
+     */
+    ngx_memzero(&inaddr6, sizeof (struct in6_addr));
+#endif
+
+    u_char* dest_address;
+    ngx_int_t port_offset;
+    
+    switch (address_type) {
+        case 0x01:
+            family = AF_INET;
+            inaddr = *(struct in_addr*) (text);
+            dest_address = ngx_pcalloc(connection->pool, INET_ADDRSTRLEN);
+            char* converted = inet_ntop(family, &inaddr, (char*)dest_address, INET_ADDRSTRLEN);
+            if(converted == NULL){
+                ngx_log_error(NGX_LOG_ERR, connection->log, 0, "could not convert, errno: %d", errno);    
+            }
+            len = sizeof(struct sockaddr_in);
+            port_offset = 4;
+            ngx_log_error(NGX_LOG_ERR, connection->log, 0, "requested ip: %*s", strlen(dest_address), dest_address);
+            rc = NGX_OK;
+            break;
+        case 0x03:
+            break;
+        case 0x04:
+            break;
+    }
+
+    addr->sockaddr = ngx_pcalloc(connection->pool, len);
+    if (addr->sockaddr == NULL) {
+        return NGX_ERROR;
+    }
+
+    addr->sockaddr->sa_family = (u_char) family;
+    addr->name.len = strlen((char*)dest_address);
+    addr->name.data = dest_address;
+    
+    addr->socklen = len;
+
+    switch (family) {
+
+#if (NGX_HAVE_INET6)
+        case AF_INET6:
+            sin6 = (struct sockaddr_in6 *) addr->sockaddr;
+            ngx_memcpy(sin6->sin6_addr.s6_addr, inaddr6.s6_addr, 16);
+            break;
+#endif
+
+        default: /* AF_INET */
+            sin = (struct sockaddr_in *) addr->sockaddr;
+            sin->sin_port = *(text + port_offset) << 8 | *(text + port_offset + 1);
+            sin->sin_addr = inaddr;
+            
+            break;
+    }
+
+    return NGX_OK;
+}
+
+static u_char *server_host = "localhost";
+
+ngx_chain_t* ngx_socks_alloc_chain(ngx_socks_buf_chain_t *chains) {
+    return NULL;
+}
+
+ngx_int_t ngx_socks_v5_request(ngx_event_t *rev) {
+    ngx_int_t rc;
+    ngx_connection_t *c;
+    ngx_socks_session_t *s;
+
+    c = rev->data;
+    s = c->data;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, c->log, 0, "socks request state");
+
+    rc = ngx_socks_read_command(s, c);
+
+    if (rc == NGX_AGAIN || rc == NGX_ERROR) {
+        return rc;
+    }
+
+    if (s->buffer->last - s->buffer->pos + 1 <= 8) {
+        return NGX_AGAIN;
+    }
+
+    if(*(s->buffer->pos) != 0x05) {
+        return NGX_SOCKS_PARSE_INVALID_COMMAND;
+    }
+
+    ngx_int_t expected_request_len = 7;
+    u_char address_type = *(s->buffer->pos + 3);
+    switch (address_type) {
+        case 0x01:
+            expected_request_len +=4;
+            break;
+        case 0x03:
+            expected_request_len += *(s->buffer->pos + 4) + 1;
+            break;
+        case 0x04:
+            expected_request_len += 16;
+            break;
+        default:
+            return NGX_SOCKS_PARSE_INVALID_COMMAND;
+    }
+
+    if (s->buffer->last - s->buffer->pos + 1 < expected_request_len) {
+        return NGX_AGAIN;
+    }
+
+    ngx_addr_t *peer = ngx_pcalloc(s->connection->pool, sizeof (ngx_addr_t));
+    if (peer == NULL) {
+        ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "could not alloc memory for peer address");
+        ngx_socks_session_internal_server_error(s);
+        return NGX_ERROR;
+    }
+    
+    rc = ngx_socks5_parse_addr(s->connection, peer, s->buffer->pos + 4, address_type);
+    switch (rc) {
+        case NGX_OK:
+            break;
+
+        case NGX_DECLINED:
+            ngx_log_error(NGX_LOG_ERR, s->connection->log, 0,
+                    "auth http server sent invalid server "
+                    "address");
+            /* fall through */
+        default:
+            ngx_socks_session_internal_server_error(s);
+            return NGX_ERROR;
+    }
+
+    ngx_socks_proxy_ctx_t *proxy_context = ngx_palloc(s->connection->pool, sizeof(*proxy_context));
+    if(proxy_context == NULL) {
+        ngx_socks_session_internal_server_error(s);
+        return NGX_ERROR;
+    }
+    proxy_context->upstream.data = s;
+    s->proxy = proxy_context;
+    
+    proxy_context->upstream.sockaddr = peer->sockaddr;
+    proxy_context->upstream.socklen = peer->socklen;
+    proxy_context->upstream.name = &peer->name;
+    proxy_context->upstream.get = ngx_event_get_peer;
+    proxy_context->upstream.log = s->connection->log;
+    proxy_context->upstream.log_error = NGX_ERROR_ERR;
+    
+    ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "requesting url: %V:%ud ", &peer->name, ((struct sockaddr_in*)peer->sockaddr)->sin_port);
+    
+    rc = ngx_event_connect_peer(&proxy_context->upstream);
+
+    if (rc == NGX_ERROR || rc == NGX_BUSY || rc == NGX_DECLINED) {
+        ngx_socks_session_internal_server_error(s);
+        return NGX_ERROR;
+    }
+    
+    proxy_context->upstream.connection->write->handler = ngx_socks_proxy_dummy_write;
+    
+    ngx_socks_core_srv_conf_t *cscf;
+
+    cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
+
+    ngx_add_timer(proxy_context->upstream.connection->read, cscf->timeout);
+
+    proxy_context->upstream.connection->data = s;
+    proxy_context->upstream.connection->pool = s->connection->pool;
+
+//    s->connection->read->handler = ngx_socks_proxy_block_read;
+    proxy_context->upstream.connection->write->handler = ngx_socks_proxy_dummy_write;
+
+//    pcf = ngx_socks_get_module_srv_conf(s, ngx_socks_proxy_module);
+    //should get buffer size from configuration file
+    s->proxy->buffer = ngx_create_temp_buf(s->connection->pool, 16 * 1024);
+    if (s->proxy->buffer == NULL) {
+        ngx_socks_session_internal_server_error(s);
+        return NGX_ERROR;
+    }
+
+    s->out.len = 0;
+    
+    //send the new ip and port for request
+    int response_addr_len = strlen(server_host);
+    
+    ngx_buf_t* buf = ngx_create_temp_buf(s->pool, sizeof (ngx_socks_request_response_t) + response_addr_len + 1);
+    ngx_socks_request_response_t* response = (ngx_socks_request_response_t*) buf->pos;
+    response->version = 0x05;
+    response->response_code = 0x00;
+    response->reserved = 0x00;
+    response->address_type = 0x03;
+    *response->bind_address = response_addr_len;
+    ngx_memcpy(response->bind_address + 1, server_host, response_addr_len);
+    *(response->bind_address + response_addr_len + 1) = (u_char)(9999 >> 8);
+    *(response->bind_address + response_addr_len + 2) = (u_char)(9999 &0xFF);
+    
+    buf->last += sizeof (ngx_socks_request_response_t) + response_addr_len;
+
+    ngx_chain_t *new_chain = ngx_alloc_chain_link(s->pool);
+    new_chain->next = NULL;
+    new_chain->buf = buf;
+
+    ngx_chain_t* last_chain = s->out_chain;
+    if (last_chain != NULL) {
+        while (last_chain->next != NULL) {
+            last_chain = last_chain->next;
+        }
+        
+        last_chain->next = new_chain;
+        last_chain->buf->last_in_chain = 0;
+    } else {
+        s->out_chain = new_chain;
+    }
+    
+//    s->args.nelts = 0;
+    s->buffer->pos = s->buffer->start;
+    s->buffer->last = s->buffer->start;
+
+    if (s->state) {
+        s->arg_start = s->buffer->start;
+    }
+
+    ngx_socks_send(c->write);
+}
+
+static void ngx_socks_5_proxy_handler(ngx_event_t *rev) {
+
+}
+
+static void ngx_socks_proxy_block_read(ngx_event_t *rev) {
+    ngx_connection_t *c;
+    ngx_mail_session_t *s;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0, "socks block read");
+
+    if (ngx_handle_read_event(rev, 0) != NGX_OK) {
+        c = rev->data;
+        s = c->data;
+
+        ngx_socks_close_connection(s);
+    }
+}
+
+static void
+ngx_socks_proxy_dummy_write(ngx_event_t *rev) {
+    ngx_connection_t *c;
+    ngx_mail_session_t *s;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0, "socks block write");
+
+    if (ngx_handle_write_event(rev, 0) != NGX_OK) {
+        c = rev->data;
+        s = c->data;
+
+        ngx_socks_close_connection(s);
+    }
+}
 
 void
 ngx_socks_v5_auth_state(ngx_event_t *rev) {
@@ -360,7 +732,7 @@ ngx_socks_v5_auth_state(ngx_event_t *rev) {
     c = rev->data;
     s = c->data;
 
-    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, c->log, 0, "smtp auth state");
+    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, c->log, 0, "socks auth state");
 
     if (rev->timedout) {
         ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "client timed out");
@@ -369,8 +741,8 @@ ngx_socks_v5_auth_state(ngx_event_t *rev) {
         return;
     }
 
-    if (s->out.len) {
-        ngx_log_debug0(NGX_LOG_DEBUG_MAIL, c->log, 0, "smtp send handler busy");
+    if (s->out_chain != NULL) {
+        ngx_log_debug0(NGX_LOG_DEBUG_MAIL, c->log, 0, "socks send handler busy");
         s->blocked = 1;
         return;
     }
@@ -379,98 +751,35 @@ ngx_socks_v5_auth_state(ngx_event_t *rev) {
 
     rc = ngx_socks_read_command(s, c);
 
-    if (rc == NGX_AGAIN || rc == NGX_ERROR) {
+    if (rc == NGX_AGAIN || rc == NGX_ERROR ) {
         return;
     }
 
-    ngx_str_set(&s->out, smtp_ok);
-
-    if (rc == NGX_OK) {
-        switch (s->socks_state) {
-
-            case ngx_smtp_start:
-
-                switch (s->command) {
-
-                    case NGX_SMTP_HELO:
-                    case NGX_SMTP_EHLO:
-                        rc = ngx_socks_v5_helo(s, c);
-                        break;
-
-                    case NGX_SMTP_AUTH:
-                        rc = ngx_socks_v5_auth(s, c);
-                        break;
-
-                    case NGX_SMTP_QUIT:
-                        s->quit = 1;
-                        ngx_str_set(&s->out, smtp_bye);
-                        break;
-
-                    case NGX_SMTP_MAIL:
-                        rc = ngx_socks_v5_mail(s, c);
-                        break;
-
-                    case NGX_SMTP_RCPT:
-                        rc = ngx_socks_v5_rcpt(s, c);
-                        break;
-
-                    case NGX_SMTP_RSET:
-                        rc = ngx_socks_v5_rset(s, c);
-                        break;
-
-                    case NGX_SMTP_NOOP:
-                        break;
-
-                    case NGX_SMTP_STARTTLS:
-                        rc = ngx_socks_v5_starttls(s, c);
-                        ngx_str_set(&s->out, smtp_starttls);
-                        break;
-
-                    default:
-                        rc = NGX_MAIL_PARSE_INVALID_COMMAND;
-                        break;
-                }
-
-                break;
-
-            case ngx_smtp_auth_login_username:
-                rc = ngx_socks_auth_login_username(s, c, 0);
-
-                ngx_str_set(&s->out, smtp_password);
-                s->socks_state = ngx_smtp_auth_login_password;
-                break;
-
-            case ngx_smtp_auth_login_password:
-                rc = ngx_socks_auth_login_password(s, c);
-                break;
-
-            case ngx_smtp_auth_plain:
-                rc = ngx_socks_auth_plain(s, c, 0);
-                break;
-
-            case ngx_smtp_auth_cram_md5:
-                rc = ngx_socks_auth_cram_md5(s, c);
-                break;
-        }
+    int next_state;
+    switch(s->auth_state) {
+        case ngx_socks_auth_start:
+            rc = ngx_socks_v5_response_auth_methods(s);
+            break;
+        default:
+            break;
+    }
+    
+    if (rc == NGX_AGAIN || rc == NGX_ERROR || rc == NGX_SOCKS_PARSE_INVALID_COMMAND) {
+        return;
     }
 
     switch (rc) {
-
-        case NGX_DONE:
-            ngx_socks_auth(s, c);
-            return;
 
         case NGX_ERROR:
             ngx_socks_session_internal_server_error(s);
             return;
 
-        case NGX_MAIL_PARSE_INVALID_COMMAND:
-            s->socks_state = ngx_smtp_start;
-            s->state = 0;
-            ngx_str_set(&s->out, smtp_invalid_command);
+        case NGX_SOCKS_PARSE_INVALID_COMMAND:
+            /* TODO: close connection */
 
-            /* fall through */
-
+        case NGX_DONE:
+            s->socks_state = ngx_socks_state_request;
+            // continue NGX_OK to write to client, 
         case NGX_OK:
             s->args.nelts = 0;
             s->buffer->pos = s->buffer->start;

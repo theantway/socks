@@ -12,6 +12,7 @@
 #include "ngx_socks.h"
 
 static void ngx_socks_init_session(ngx_connection_t *c);
+ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c);
 
 void ngx_socks_init_connection(ngx_connection_t *c) {
     ngx_uint_t i;
@@ -519,7 +520,7 @@ void ngx_socks_send(ngx_event_t *wev) {
         return;
     }
 
-    if (s->out.len == 0) {
+    if (s->out_chain == NULL) {
         if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
             ngx_socks_close_connection(c);
         }
@@ -527,10 +528,10 @@ void ngx_socks_send(ngx_event_t *wev) {
         return;
     }
 
-    n = c->send(c, s->out.data, s->out.len);
+    n = c->send(c, s->out_chain->buf->pos, s->out_chain->buf->last - s->out_chain->buf->pos );
 
     if (n > 0) {
-        s->out.len -= n;
+        s->out_chain->buf->pos += n;
 
         if (wev->timer_set) {
             ngx_del_timer(wev);
@@ -565,8 +566,7 @@ void ngx_socks_send(ngx_event_t *wev) {
     }
 }
 
-ngx_int_t
-ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
+ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
     ssize_t n;
     ngx_int_t rc;
     ngx_str_t l;
@@ -594,6 +594,8 @@ ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
 
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
 
+    ngx_log_error(NGX_LOG_ERR, c->log, 0, "before parsing command");
+    
     rc = cscf->protocol->parse_command(s);
 
     if (rc == NGX_AGAIN) {

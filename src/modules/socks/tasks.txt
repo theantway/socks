@@ -1,0 +1,12 @@
+parse requested addresses:  ipv4
+
+send request to remote server
+send response back to client
+
+close connection to remote server after finished
+wait for new request
+
+parse requested addresses:   ipv6
+parse requested addresses:   domain name
+
+

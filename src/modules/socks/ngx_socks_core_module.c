@@ -156,12 +156,12 @@ ngx_socks_core_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child) {
         conf->server_name = cf->cycle->hostname;
     }
 
-//    if (conf->protocol == NULL) {
-//        ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
-//                "unknown protocol(v4/v5) for socks server in %s:%ui",
-//                conf->file_name, conf->line);
-//        return NGX_CONF_ERROR;
-//    }
+    if (conf->protocol == NULL) {
+        ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
+                "unknown protocol(socks4/socks5) for socks server in %s:%ui",
+                conf->file_name, conf->line);
+        return NGX_CONF_ERROR;
+    }
 
     ngx_conf_merge_ptr_value(conf->resolver, prev->resolver, NULL);
 
@@ -538,7 +538,6 @@ ngx_socks_core_protocol(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
 
         module = ngx_modules[m]->ctx;
 
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "module protocol \"%V\" value: \"%V\"", &(module->protocol->name), &value[1]);
         if (module->protocol
                 && ngx_strcmp(module->protocol->name.data, value[1].data) == 0) {
             cscf->protocol = module->protocol;
