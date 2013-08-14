@@ -14,6 +14,12 @@
 static void ngx_socks_init_session(ngx_connection_t *c);
 ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c);
 
+void ngx_socks_init_buf_chain(ngx_socks_buf_chains_t *chain, ngx_pool_t *pool) {
+    chain->pool = pool;
+    chain->chains = NULL;
+    chain->free_chains = NULL;
+}
+
 void ngx_socks_init_connection(ngx_connection_t *c) {
     ngx_uint_t i;
     ngx_socks_port_t *port;
@@ -117,6 +123,9 @@ void ngx_socks_init_connection(ngx_connection_t *c) {
 
     s->addr_text = &addr_conf->addr_text;
 
+    ngx_socks_init_buf_chain(&s->in_buf_chain, c->pool);
+    ngx_socks_init_buf_chain(&s->out_buf_chain, c->pool);
+    
     c->data = s;
     s->connection = c;
 
@@ -451,9 +460,6 @@ ngx_socks_auth_cram_md5_salt(ngx_socks_session_t *s, ngx_connection_t *c,
     p[n++] = CR;
     p[n++] = LF;
 
-    s->out.len = n;
-    s->out.data = p;
-
     return NGX_OK;
 }
 
@@ -520,7 +526,7 @@ void ngx_socks_send(ngx_event_t *wev) {
         return;
     }
 
-    if (s->out_chain == NULL) {
+    if (s->out_buf_chain.chains == NULL) {
         if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
             ngx_socks_close_connection(c);
         }
@@ -528,10 +534,26 @@ void ngx_socks_send(ngx_event_t *wev) {
         return;
     }
 
-    n = c->send(c, s->out_chain->buf->pos, s->out_chain->buf->last - s->out_chain->buf->pos );
+    ngx_chain_t * chain = s->out_buf_chain.chains;
+    while(chain != NULL) {
+        ngx_buf_t *buf = chain->buf;
+        
+        n = c->send(c, buf->pos, buf->last - buf->pos);
 
-    if (n > 0) {
-        s->out_chain->buf->pos += n;
+        if (n <= 0) {
+            break;
+        }
+
+        buf->pos += n;
+        
+        if(buf->pos == buf->last) {
+            ngx_chain_t* current_chain = chain;
+            chain = chain->next;
+            
+            ngx_socks_free_buf_chain(&s->out_buf_chain, current_chain);
+            
+            continue;
+        }
 
         if (wev->timer_set) {
             ngx_del_timer(wev);
@@ -548,7 +570,7 @@ void ngx_socks_send(ngx_event_t *wev) {
 
         return;
     }
-
+    
     if (n == NGX_ERROR) {
         ngx_socks_close_connection(c);
         return;
@@ -592,33 +614,6 @@ ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
         return NGX_AGAIN;
     }
 
-    cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
-
-    ngx_log_error(NGX_LOG_ERR, c->log, 0, "before parsing command");
-    
-    rc = cscf->protocol->parse_command(s);
-
-    if (rc == NGX_AGAIN) {
-
-        if (s->buffer->last < s->buffer->end) {
-            return rc;
-        }
-
-        l.len = s->buffer->last - s->buffer->start;
-        l.data = s->buffer->start;
-
-        ngx_log_error(NGX_LOG_INFO, c->log, 0,
-                "client sent too long command \"%V\"", &l);
-
-        s->quit = 1;
-
-        return NGX_SOCKS_PARSE_INVALID_COMMAND;
-    }
-
-    if (rc == NGX_SOCKS_PARSE_INVALID_COMMAND) {
-        return rc;
-    }
-
     if (rc == NGX_ERROR) {
         ngx_socks_close_connection(c);
         return NGX_ERROR;
@@ -648,7 +643,7 @@ void ngx_socks_session_internal_server_error(ngx_socks_session_t *s) {
 
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
 
-    s->out = cscf->protocol->internal_server_error;
+//    s->out = cscf->protocol->internal_server_error;
     s->quit = 1;
 
     ngx_socks_send(s->connection->write);

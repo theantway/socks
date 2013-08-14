@@ -136,8 +136,10 @@ class socksocket(socket.socket):
 		Receive EXACTLY the number of bytes requested from the socket.
 		Blocks until the required number of bytes have been received.
 		"""
+		print "<><><> " + str(bytes)
 		data = ""
 		while len(data) < bytes:
+			print "bytes: '" + str(bytes)  + "' len:'" + str(len(data)) + "'"
 			data = data + self.recv(bytes-len(data))
 
 		print "<<<==="
@@ -260,7 +262,8 @@ class socksocket(socket.socket):
 			boundaddr = self.__recvall(4)
 		elif resp[3] == "\x03":
 			resp = resp + self.recv(1)
-			boundaddr = self.__recvall(resp[4])
+			print "received a host name: " + " ".join("{0:x}".format(ord(c)) for c in resp)
+			boundaddr = self.__recvall(ord(resp[4]))
 		else:
 			self.close()
 			raise GeneralProxyError((1,_generalerrors[1]))

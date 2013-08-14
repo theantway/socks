@@ -174,24 +174,21 @@ typedef struct {
     ngx_chain_t *chains;
     ngx_chain_t *free_chains;
     ngx_pool_t *pool;
-} ngx_socks_buf_chain_t;
+} ngx_socks_buf_chains_t;
 
-ngx_chain_t* ngx_socks_alloc_chain(ngx_socks_buf_chain_t *chains){
-    return NULL;
-}
+ngx_chain_t* ngx_socks_alloc_chain(ngx_socks_buf_chains_t *chains);
+void ngx_socks_init_buf_chain(ngx_socks_buf_chains_t *chains, ngx_pool_t *pool);
+void ngx_socks_free_buf_chain(ngx_socks_buf_chains_t *chains, ngx_chain_t *chain);
 
 typedef struct {
     uint32_t signature; /* "MAIL" */
 
     ngx_connection_t *connection;
 
-    ngx_socks_buf_chain_t in_buf_chain;
+    ngx_socks_buf_chains_t in_buf_chain;
+    ngx_socks_buf_chains_t out_buf_chain;
     
-    ngx_output_chain_ctx_t output_ctx;
-    
-    ngx_str_t out;
     ngx_buf_t *buffer;
-    ngx_chain_t *out_chain;
 
     void **ctx;
     void **main_conf;
