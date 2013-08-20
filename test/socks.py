@@ -130,16 +130,34 @@ class socksocket(socket.socket):
 			self.__proxy = (None, None, None, None, None, None)
 		self.__proxysockname = None
 		self.__proxypeername = None
+
+	def recv(self, len):
+		data = ""
+		print "in recv"
+		data = super(socksocket, self).recv(len)
+		print "ooooo RECEIVED: " + data 
+
+		print "<<<<<<<<<<<<<"
+		print " ".join("{0:x}".format(ord(c)) for c in data)
+		# print bytes
+		print ""
+		
+		return data
 	
+	def sendall(self, bytes):
+		print ">>>>>>>"
+		print " ".join("{0:x}".format(ord(c)) for c in bytes)
+		print ">>>>>>> END"
+		return super(socksocket, self).sendall(bytes)
+
 	def __recvall(self, bytes):
 		"""__recvall(bytes) -> data
 		Receive EXACTLY the number of bytes requested from the socket.
 		Blocks until the required number of bytes have been received.
 		"""
-		print "<><><> " + str(bytes)
+		print "<><><> Expecting " + str(bytes) + " bytes."
 		data = ""
 		while len(data) < bytes:
-			print "bytes: '" + str(bytes)  + "' len:'" + str(len(data)) + "'"
 			data = data + self.recv(bytes-len(data))
 
 		print "<<<==="
@@ -233,7 +251,7 @@ class socksocket(socket.socket):
 			ipaddr = socket.inet_aton(destaddr)
 			req = req + "\x01" + ipaddr
 		except socket.error:
-			print "not a ip address " + self.__proxy[3]
+			print "not a ip address " + str(self.__proxy[3])
 			# Well it's not an IP number,  so it's probably a DNS name.
 			if self.__proxy[3]==True:
 				# Resolve remotely

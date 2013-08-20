@@ -33,7 +33,7 @@ static ngx_str_t ngx_socks_v5_auth_methods_names[] = {
 static ngx_socks_protocol_t ngx_socks_v5_protocol = {
     ngx_string("socks5"), 
     { 0x53, 0x4B, 0x43, 0x4F, 0x53, 0x35, 0},
-    NGX_SOCKS_V5_PROTOCOL,
+    NGX_SOCKS_V5,
 
     ngx_socks_v5_init_session,
     ngx_socks_v5_init_protocol,

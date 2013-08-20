@@ -144,7 +144,8 @@ typedef enum {
     ngx_socks_state_auth_login_username,
     ngx_socks_state_auth_login_password,
     ngx_socks_state_auth_plain,
-    ngx_socks_state_request
+    ngx_socks_state_request,
+    ngx_socks_state_pass_through
 } ngx_socks_state_e;
     
 typedef enum {
@@ -189,6 +190,7 @@ typedef struct {
     ngx_socks_buf_chains_t out_buf_chain;
     
     ngx_buf_t *buffer;
+    ngx_buf_t *upstream_buffer;
 
     void **ctx;
     void **main_conf;

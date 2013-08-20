@@ -614,11 +614,6 @@ ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
         return NGX_AGAIN;
     }
 
-    if (rc == NGX_ERROR) {
-        ngx_socks_close_connection(c);
-        return NGX_ERROR;
-    }
-
     return NGX_OK;
 }
 
