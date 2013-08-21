@@ -593,26 +593,6 @@ static void ngx_socks_v5_pass_through(ngx_event_t *rev) {
             ) {
         ngx_socks_proxy_close_session(s);
     }
-//    
-//    if(ngx_handle_write_event(target->write, 0) != NGX_OK) {
-//        ngx_socks_proxy_close_session(s);
-//        return;
-//    }
-//    
-//    if(ngx_handle_read_event(target->read, 0) != NGX_OK) {
-//        ngx_socks_proxy_close_session(s);
-//        return;
-//    }
-//    
-//    if(ngx_handle_write_event(target->write, 0) != NGX_OK) {
-//        ngx_socks_proxy_close_session(s);
-//        return;
-//    }
-//    
-//    if(ngx_handle_read_event(target->read, 0) != NGX_OK) {
-//        ngx_socks_proxy_close_session(s);
-//        return;
-//    }
 }
 
 ngx_int_t ngx_socks_v5_request(ngx_event_t *rev) {
