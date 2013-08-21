@@ -8,9 +8,10 @@ socket.socket = socks.socksocket
 # urllib.urlopen("http://www.twitter.com")
 # urllib.urlopen("http://www.baidu.com")
 f=urllib.urlopen("http://localhost:8000")
-print "<======"
+print ""
+print "=====Result====="
 print f.read()
 
 f=urllib.urlopen("http://localhost:8000")
-print "<======"
+print "=====Result====="
 print f.read()

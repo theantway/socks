@@ -17,3 +17,6 @@
 *.out
 *.app
 nbproject
+.idea
+*.im.
+*.iml
