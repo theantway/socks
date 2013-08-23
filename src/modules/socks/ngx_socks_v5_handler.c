@@ -17,14 +17,15 @@ static void ngx_socks_v5_greeting(ngx_socks_session_t *s, ngx_connection_t *c);
 static ngx_buf_t* ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c);
 static void ngx_socks_v5_pass_through(ngx_event_t *rev);
 u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size);
+static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_connection_t *c, ngx_int_t family, void* address, short port);
 
 static ngx_str_t socks5_unavailable = ngx_string("[UNAVAILABLE]");
 static ngx_str_t socks5_tempunavail = ngx_string("[TEMPUNAVAIL]");
 
 void
 ngx_socks_v5_init_session(ngx_socks_session_t *s, ngx_connection_t *c) {
-    struct sockaddr_in *sin;
-    ngx_resolver_ctx_t *ctx;
+//    struct sockaddr_in *sin;
+//    ngx_resolver_ctx_t *ctx;
     ngx_socks_core_srv_conf_t *cscf;
     s->pool = ngx_create_pool(1024, c->log);
 
@@ -103,6 +104,13 @@ static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *
 
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
 
+    in_addr_t addr = ngx_inet_addr(name->data, name->len);
+    if(addr != INADDR_NONE) {
+        ngx_log_debug(NGX_LOG_DEBUG_SOCKS, c->log, 0, "Found ip address during resolve name, using address directly");
+        ngx_socks_v5_connect_upstream(s, c, AF_INET, (struct in_addr*) &addr, s->port);
+        return;
+    }
+    
     ctx = ngx_resolve_start(cscf->resolver, NULL);
     if (ctx == NULL) {
         ngx_socks_proxy_close_session(s);
@@ -126,9 +134,7 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
     in_addr_t addr;
     ngx_uint_t i;
     ngx_connection_t *c;
-    struct sockaddr_in *sin;
     ngx_socks_session_t *s;
-    ngx_addr_t *peer;
     
     s = ctx->data;
     c = s->connection;
@@ -160,50 +166,9 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
         }
     }
 
-    peer = ngx_pcalloc(s->connection->pool, sizeof (ngx_addr_t));
-    if (peer == NULL) {
-        ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "could not allocate memory for peer address");
-        ngx_socks_session_internal_server_error(s);
-        return;
-    }
-    
-    peer->name.data = ctx->name.data;
-    peer->name.len = ctx->name.len;
-
-    ngx_int_t len;
-    ngx_int_t family = AF_INET;
-    struct sockaddr_in6 *sin6;
-    
-    switch (family) {
-#if (NGX_HAVE_INET6)
-        case AF_INET6:
-            len = sizeof(struct sockaddr_in6);
-            sin6 = (struct sockaddr_in6 *) peer->sockaddr;
-//            ngx_memcpy(sin6->sin6_addr.s6_addr, inaddr6.s6_addr, 16);
-            break;
-#endif
-
-        default: /* AF_INET */
-            len = sizeof (struct sockaddr_in);
-            peer->sockaddr = ngx_pcalloc(c->pool, len);
-            if (peer->sockaddr == NULL) {
-                ngx_socks_session_internal_server_error(s);
-                return;
-            }
-
-            sin = (struct sockaddr_in *) peer->sockaddr;
-            sin->sin_port = s->port;
-            sin->sin_addr.s_addr = addr;
-
-            break;
-    }
-    
-    peer->sockaddr->sa_family = (u_char) family;
-    peer->socklen = len;
-
-    ngx_socks_v5_connect_requested_host(s, c, peer);
-
     ngx_resolve_name_done(ctx);
+    
+    ngx_socks_v5_connect_upstream(s, c, AF_INET, (struct in_addr*) &addr, s->port);
 }
 
 static void
@@ -233,6 +198,7 @@ ngx_socks_v5_init_protocol(ngx_event_t *rev) {
     ngx_socks_session_t *s;
 
     c = rev->data;
+    s = c->data;
 
     c->log->action = "in auth state";
 
@@ -242,8 +208,6 @@ ngx_socks_v5_init_protocol(ngx_event_t *rev) {
         ngx_socks_proxy_close_session(s);
         return;
     }
-
-    s = c->data;
 
     if (s->buffer == NULL) {
         s->buffer = ngx_socks_v5_create_buffer(s, c);
@@ -373,85 +337,6 @@ void ngx_socks_v5_handle_client_request(ngx_event_t *rev) {
             ngx_log_error(NGX_LOG_ERR, c->log, 0, "::::---(((((( UNKNOWN state: %uz", s->socks_state);
             break;
     }
-}
-
-ngx_int_t ngx_socks5_parse_addr(ngx_connection_t *connection, ngx_addr_t *addr, u_char *text, ngx_socks_address_type_e address_type) {
-    struct in_addr inaddr;
-    ngx_uint_t family = 0;
-    ngx_socks_session_t *s;
-    ngx_int_t rc;
-    ngx_int_t len;
-    ngx_int_t ip_address_len;
-    struct sockaddr_in *sin;
-#if (NGX_HAVE_INET6)
-    struct in6_addr inaddr6;
-    struct sockaddr_in6 *sin6;
-
-    s = connection->data;
-    /*
-     * prevent MSVC8 warning:
-     *    potentially uninitialized local variable 'inaddr6' used
-     */
-    ngx_memzero(&inaddr6, sizeof (struct in6_addr));
-#endif
-
-    u_char* dest_address;
-    ngx_int_t port_offset;
-    
-    switch (address_type) {
-        case ipv4:
-            family = AF_INET;
-            inaddr = *(struct in_addr*) (text);
-            dest_address = ngx_pcalloc(connection->pool, INET_ADDRSTRLEN);
-            u_char* converted = inet_ntop(family, &inaddr, (char*)dest_address, INET_ADDRSTRLEN);
-            if(converted == NULL){
-                ngx_log_error(NGX_LOG_ERR, connection->log, 0, "could not convert, errno: %d", errno);    
-            }
-            ip_address_len = strlen(converted);
-            s->host.data = ngx_pstrdup_n(connection->pool, converted, ip_address_len);
-            s->host.len = ip_address_len;
-            
-            len = sizeof(struct sockaddr_in);
-            port_offset = 4;
-            ngx_log_error(NGX_LOG_ERR, connection->log, 0, "requested ip: %*s", strlen((char*) dest_address), dest_address);
-            rc = NGX_OK;
-            break;
-        case hostname:
-            
-            break;
-        case ipv6:
-            break;
-    }
-
-    addr->sockaddr = ngx_pcalloc(connection->pool, len);
-    if (addr->sockaddr == NULL) {
-        return NGX_ERROR;
-    }
-
-    addr->sockaddr->sa_family = (u_char) family;
-    addr->name.len = strlen((char*)dest_address);
-    addr->name.data = dest_address;
-    
-    addr->socklen = len;
-
-    switch (family) {
-
-#if (NGX_HAVE_INET6)
-        case AF_INET6:
-            sin6 = (struct sockaddr_in6 *) addr->sockaddr;
-            ngx_memcpy(sin6->sin6_addr.s6_addr, inaddr6.s6_addr, 16);
-            break;
-#endif
-
-        default: /* AF_INET */
-            sin = (struct sockaddr_in *) addr->sockaddr;
-            sin->sin_port = *(short*)(text+port_offset);//already network order
-            sin->sin_addr.s_addr = inaddr.s_addr;
-            
-            break;
-    }
-
-    return NGX_OK;
 }
 
 static u_char *server_host = (u_char*)"localhost";
@@ -648,6 +533,90 @@ ngx_int_t ngx_socks5_resolve_address(ngx_socks_session_t *s, ngx_connection_t *c
     return NGX_OK;
 }
 
+static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_connection_t *c, ngx_int_t family, void* address, short port) {
+    ngx_int_t rc;
+    struct in_addr inaddr;
+    ngx_int_t len;
+    ngx_int_t ip_address_len;
+    struct sockaddr_in *sin;
+
+    u_char* dest_address;
+
+#if (NGX_HAVE_INET6)
+    struct in6_addr inaddr6;
+    struct sockaddr_in6 *sin6;
+    /*
+     * prevent MSVC8 warning:
+     *    potentially uninitialized local variable 'inaddr6' used
+     */
+    ngx_memzero(&inaddr6, sizeof (struct in6_addr));
+#endif
+
+    ngx_addr_t *peer = ngx_pcalloc(s->connection->pool, sizeof (ngx_addr_t));
+    if (peer == NULL) {
+        ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "could not allocate memory for peer address");
+        ngx_socks_session_internal_server_error(s);
+        return NGX_ERROR;
+    }
+
+    switch (family) {
+        case AF_INET: //IPv4
+            inaddr = *(struct in_addr*) address;
+            
+            dest_address = ngx_pcalloc(c->pool, INET_ADDRSTRLEN);
+            const char* converted = inet_ntop(family, &inaddr, (char*) dest_address, INET_ADDRSTRLEN);
+            if (converted == NULL) {
+                ngx_log_error(NGX_LOG_ERR, c->log, 0, "could not convert, errno: %d", errno);
+            }
+            ip_address_len = strlen(converted);
+            s->host.data = ngx_pstrdup_n(c->pool, dest_address, ip_address_len);
+            s->host.len = ip_address_len;
+
+            len = sizeof (struct sockaddr_in);
+            ngx_log_error(NGX_LOG_ERR, c->log, 0, "requested ip: %V", &s->host);
+            rc = NGX_OK;
+            break;
+        default: //IPv6
+            break;
+    }
+
+    peer->sockaddr = ngx_pcalloc(c->pool, len);
+    if (peer->sockaddr == NULL) {
+        return NGX_ERROR;
+    }
+
+    peer->sockaddr->sa_family = (u_char) family;
+    peer->name.len = strlen((char*) dest_address);
+    peer->name.data = dest_address;
+
+    peer->socklen = len;
+
+    switch (family) {
+
+#if (NGX_HAVE_INET6)
+        case AF_INET6:
+            sin6 = (struct sockaddr_in6 *) peer->sockaddr;
+            ngx_memcpy(sin6->sin6_addr.s6_addr, inaddr6.s6_addr, 16);
+            break;
+#endif
+
+        default: /* AF_INET */
+            sin = (struct sockaddr_in *) peer->sockaddr;
+            sin->sin_port = port;
+            sin->sin_addr.s_addr = inaddr.s_addr;
+
+            break;
+    }
+
+    if (rc != NGX_OK) {
+        ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "Could not parse IPV4 address.");
+        ngx_socks_session_internal_server_error(s);
+        return rc;
+    }
+
+    return ngx_socks_v5_connect_requested_host(s, c, peer);    
+}
+
 static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx_connection_t *c, ngx_addr_t *peer) {
     ngx_int_t rc;    
 
@@ -688,26 +657,6 @@ static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx
     proxy_context->upstream.connection->pool = s->connection->pool;
     
     return NGX_OK;
-}
-
-ngx_int_t ngx_socks_v5_connect_ipv4(ngx_socks_session_t *s, ngx_connection_t *c) {
-    ngx_int_t rc;
-    
-    ngx_addr_t *peer = ngx_pcalloc(s->connection->pool, sizeof (ngx_addr_t));
-    if (peer == NULL) {
-        ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "could not allocate memory for peer address");
-        ngx_socks_session_internal_server_error(s);
-        return NGX_ERROR;
-    }
-
-    rc = ngx_socks5_parse_addr(s->connection, peer, s->buffer->pos + 4, ipv4);
-    if (rc != NGX_OK) {
-        ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "Could not parse IPV4 address.");
-        ngx_socks_session_internal_server_error(s);
-        return rc;
-    }
-
-    return ngx_socks_v5_connect_requested_host(s, c, peer);    
 }
 
 u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size) {
@@ -775,9 +724,8 @@ ngx_int_t ngx_socks_v5_request(ngx_event_t *rev) {
     
     switch (address_type) {
         case 0x01:
-            return ngx_socks_v5_connect_ipv4(s, c);
+            return ngx_socks_v5_connect_upstream(s, c, AF_INET, (struct in_addr*) (s->buffer->pos + 4), *(short*)(s->buffer->pos + port_offset));
         case 0x03:
-
             s->host.data = ngx_pstrdup_n(c->pool, s->buffer->pos + 5, *(s->buffer->pos + 4));
             if (s->host.data == NULL) {
                 ngx_socks_proxy_close_session(s);
@@ -835,7 +783,7 @@ static void ngx_socks_proxy_connected(ngx_event_t *rev) {
     ngx_connection_t *c;
     ngx_socks_session_t *s;
 
-    ngx_log_debug0(NGX_LOG_DEBUG_SOCKS, rev->log, 0, "socks check connected");
+    ngx_log_debug0(NGX_LOG_DEBUG_SOCKS, rev->log, 0, "socks check if upstream has been connected");
 
     c = rev->data;
     s = c->data;
