@@ -1,11 +1,3 @@
-
-
-/*
- * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
- */
-
-
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_event.h>
@@ -505,8 +497,6 @@ ngx_socks_auth_cram_md5(ngx_socks_session_t *s, ngx_connection_t *c) {
     ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0,
             "mail auth cram-md5: \"%V\" \"%V\"", &s->login, &s->passwd);
 
-    //s->auth_method = NGX_MAIL_AUTH_CRAM_MD5;
-
     return NGX_DONE;
 }
 
@@ -626,8 +616,6 @@ ngx_socks_auth(ngx_socks_session_t *s, ngx_connection_t *c) {
     }
 
     s->login_attempt++;
-
-    //ngx_socks_auth_http_init(s);
 }
 
 void ngx_socks_session_internal_server_error(ngx_socks_session_t *s) {
@@ -635,7 +623,6 @@ void ngx_socks_session_internal_server_error(ngx_socks_session_t *s) {
 
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
 
-//    s->out = cscf->protocol->internal_server_error;
     s->quit = 1;
 
     ngx_socks_send(s->connection->write);

@@ -10,92 +10,25 @@ ngx_int_t ngx_socks_v5_request(ngx_event_t *rev);
 static void ngx_socks_proxy_block_read(ngx_event_t *rev);
 static void ngx_socks_proxy_connected(ngx_event_t *rev);
 static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx_connection_t *c, ngx_addr_t *peer);
-static void ngx_socks_v5_resolve_addr_handler(ngx_resolver_ctx_t *ctx);
 static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *c, ngx_str_t *name);
 static void ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx);
 static void ngx_socks_v5_greeting(ngx_socks_session_t *s, ngx_connection_t *c);
 static ngx_buf_t* ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c);
 static void ngx_socks_v5_pass_through(ngx_event_t *rev);
-u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size);
+static u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size);
 static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_connection_t *c, ngx_int_t family, void* address, short port);
 
 static ngx_str_t socks5_unavailable = ngx_string("[UNAVAILABLE]");
 static ngx_str_t socks5_tempunavail = ngx_string("[TEMPUNAVAIL]");
 
-void
-ngx_socks_v5_init_session(ngx_socks_session_t *s, ngx_connection_t *c) {
-//    struct sockaddr_in *sin;
-//    ngx_resolver_ctx_t *ctx;
+void ngx_socks_v5_init_session(ngx_socks_session_t *s, ngx_connection_t *c) {
     ngx_socks_core_srv_conf_t *cscf;
     s->pool = ngx_create_pool(1024, c->log);
 
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
 
-//    if (cscf->resolver == NULL) {
-        s->host = socks5_unavailable;
-        ngx_socks_v5_greeting(s, c);
-        //wait for client send initial request for auth methods
-//        return;
-//    }
-//
-//    if (c->sockaddr->sa_family != AF_INET) {
-//        s->host = socks5_tempunavail;
-//        ngx_socks_v5_greeting(s, c);
-//        return;
-//    }
-//
-//    c->log->action = "in resolving client address";
-//
-//    ctx = ngx_resolve_start(cscf->resolver, NULL);
-//    if (ctx == NULL) {
-//        ngx_socks_close_connection(c);
-//        return;
-//    }
-//
-//    /* AF_INET only */
-//
-//    sin = (struct sockaddr_in *) c->sockaddr;
-//
-//    ctx->addr = sin->sin_addr.s_addr;
-//    ctx->handler = ngx_socks_v5_resolve_addr_handler;
-//    ctx->data = s;
-//    ctx->timeout = cscf->resolver_timeout;
-//
-//    if (ngx_resolve_addr(ctx) != NGX_OK) {
-//        ngx_socks_close_connection(c);
-//    }
-}
-
-static void
-ngx_socks_v5_resolve_addr_handler(ngx_resolver_ctx_t *ctx) {
-    ngx_connection_t *c;
-    ngx_socks_session_t *s;
-
-    s = ctx->data;
-    c = s->connection;
-
-    if (ctx->state) {
-        ngx_log_error(NGX_LOG_ERR, c->log, 0,
-                "%V could not be resolved (%i: %s)",
-                &ctx->name, ctx->state,
-                ngx_resolver_strerror(ctx->state));
-
-        ngx_resolve_addr_done(ctx);
-
-        ngx_socks_v5_greeting(s, s->connection);
-
-        return;
-    }
-
-    c->log->action = "in resolving client hostname";
-    ngx_resolve_addr_done(ctx);
-
-    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "address resolved: %V", &s->host);
-
-//    c->read->handler = ngx_socks_v5_resolve_name;
-
-    ngx_post_event(c->read, &ngx_posted_events);
+    s->host = socks5_unavailable;
+    ngx_socks_v5_greeting(s, c);
 }
 
 static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *c, ngx_str_t *name) {
@@ -213,7 +146,7 @@ ngx_socks_v5_init_protocol(ngx_event_t *rev) {
         s->buffer = ngx_socks_v5_create_buffer(s, c);
         
         if (s->buffer == NULL) {
-            ngx_log_error(NGX_LOG_INFO, c->log, 0, "Could not create buffer for request");
+            ngx_log_error(NGX_LOG_ERR, c->log, 0, "Could not create buffer for request");
             ngx_socks_session_internal_server_error(s);
             return;
         }
@@ -489,50 +422,6 @@ static void ngx_socks_v5_pass_through(ngx_event_t *rev) {
     }
 }
 
-ngx_int_t ngx_socks5_resolve_address(ngx_socks_session_t *s, ngx_connection_t *c) {
-    struct sockaddr_in *sin;
-    ngx_resolver_ctx_t *ctx;
-    ngx_socks_core_srv_conf_t *cscf;
-    s->pool = ngx_create_pool(1024, c->log);
-
-    cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
-
-    if (cscf->resolver == NULL) {
-        s->host = socks5_unavailable;
-        //not found resolver
-        return NGX_ERROR;
-    }
-
-    if (c->sockaddr->sa_family != AF_INET) {
-        s->host = socks5_tempunavail;
-        //not supported
-        return NGX_ERROR;
-    }
-
-    c->log->action = "in resolving destination address";
-
-    ctx = ngx_resolve_start(cscf->resolver, NULL);
-    if (ctx == NULL) {
-        ngx_socks_proxy_close_session(s);
-        return NGX_ERROR;
-    }
-
-    /* AF_INET only */
-
-    sin = (struct sockaddr_in *) c->sockaddr;
-
-    ctx->addr = sin->sin_addr.s_addr;
-    ctx->handler = ngx_socks_v5_resolve_addr_handler;
-    ctx->data = s;
-    ctx->timeout = cscf->resolver_timeout;
-
-    if (ngx_resolve_addr(ctx) != NGX_OK) {
-        ngx_socks_proxy_close_session(s);
-    }
-    
-    return NGX_OK;
-}
-
 static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_connection_t *c, ngx_int_t family, void* address, short port) {
     ngx_int_t rc;
     struct in_addr inaddr;
@@ -659,7 +548,7 @@ static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx
     return NGX_OK;
 }
 
-u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size) {
+static u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size) {
     u_char *dst;
 
     dst = ngx_pnalloc(pool, size);
