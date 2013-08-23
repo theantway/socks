@@ -12,7 +12,6 @@
 #include "ngx_socks.h"
 
 static void ngx_socks_init_session(ngx_connection_t *c);
-ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c);
 
 void ngx_socks_init_buf_chain(ngx_socks_buf_chains_t *chain, ngx_pool_t *pool) {
     chain->pool = pool;
@@ -145,7 +144,8 @@ void ngx_socks_init_connection(ngx_connection_t *c) {
     c->log->handler = ngx_socks_log_error;
     c->log->data = ctx;
     c->log->action = "sending client greeting line";
-
+    c->log->log_level = NGX_LOG_DEBUG_CORE | NGX_LOG_DEBUG_SOCKS;
+    
     c->log_error = NGX_ERROR_INFO;
 
 #if (NGX_SOCKS_SSL)
@@ -327,7 +327,7 @@ ngx_int_t ngx_socks_auth_plain(ngx_socks_session_t *s, ngx_connection_t *c, ngx_
     arg = s->args.elts;
 
 #if (NGX_DEBUG_MAIL_PASSWD)
-    ngx_log_debug1(NGX_LOG_DEBUG_MAIL, c->log, 0,
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
             "mail auth plain: \"%V\"", &arg[n]);
 #endif
 
@@ -373,7 +373,7 @@ ngx_int_t ngx_socks_auth_plain(ngx_socks_session_t *s, ngx_connection_t *c, ngx_
     s->passwd.data = p;
 
 #if (NGX_DEBUG_MAIL_PASSWD)
-    ngx_log_debug2(NGX_LOG_DEBUG_MAIL, c->log, 0,
+    ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0,
             "mail auth plain: \"%V\" \"%V\"", &s->login, &s->passwd);
 #endif
 
@@ -387,7 +387,7 @@ ngx_socks_auth_login_username(ngx_socks_session_t *s, ngx_connection_t *c,
 
     arg = s->args.elts;
 
-    ngx_log_debug1(NGX_LOG_DEBUG_MAIL, c->log, 0,
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
             "mail auth login username: \"%V\"", &arg[n]);
 
     s->login.data = ngx_pnalloc(c->pool, ngx_base64_decoded_length(arg[n].len));
@@ -401,7 +401,7 @@ ngx_socks_auth_login_username(ngx_socks_session_t *s, ngx_connection_t *c,
         return NGX_SOCKS_PARSE_INVALID_COMMAND;
     }
 
-    ngx_log_debug1(NGX_LOG_DEBUG_MAIL, c->log, 0,
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
             "mail auth login username: \"%V\"", &s->login);
 
     return NGX_OK;
@@ -414,7 +414,7 @@ ngx_socks_auth_login_password(ngx_socks_session_t *s, ngx_connection_t *c) {
     arg = s->args.elts;
 
 #if (NGX_DEBUG_MAIL_PASSWD)
-    ngx_log_debug1(NGX_LOG_DEBUG_MAIL, c->log, 0,
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
             "mail auth login password: \"%V\"", &arg[0]);
 #endif
 
@@ -431,7 +431,7 @@ ngx_socks_auth_login_password(ngx_socks_session_t *s, ngx_connection_t *c) {
     }
 
 #if (NGX_DEBUG_MAIL_PASSWD)
-    ngx_log_debug1(NGX_LOG_DEBUG_MAIL, c->log, 0,
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
             "mail auth login password: \"%V\"", &s->passwd);
 #endif
 
@@ -470,7 +470,7 @@ ngx_socks_auth_cram_md5(ngx_socks_session_t *s, ngx_connection_t *c) {
 
     arg = s->args.elts;
 
-    ngx_log_debug1(NGX_LOG_DEBUG_MAIL, c->log, 0,
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
             "mail auth cram-md5: \"%V\"", &arg[0]);
 
     s->login.data = ngx_pnalloc(c->pool, ngx_base64_decoded_length(arg[0].len));
@@ -502,7 +502,7 @@ ngx_socks_auth_cram_md5(ngx_socks_session_t *s, ngx_connection_t *c) {
         return NGX_SOCKS_PARSE_INVALID_COMMAND;
     }
 
-    ngx_log_debug2(NGX_LOG_DEBUG_MAIL, c->log, 0,
+    ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0,
             "mail auth cram-md5: \"%V\" \"%V\"", &s->login, &s->passwd);
 
     //s->auth_method = NGX_MAIL_AUTH_CRAM_MD5;
@@ -522,13 +522,13 @@ void ngx_socks_send(ngx_event_t *wev) {
     if (wev->timedout) {
         ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "client timed out");
         c->timedout = 1;
-        ngx_socks_close_connection(c);
+        ngx_socks_proxy_close_session(s);
         return;
     }
 
     if (s->out_buf_chain.chains == NULL) {
         if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
-            ngx_socks_close_connection(c);
+            ngx_socks_proxy_close_session(s);
         }
 
         return;
@@ -560,7 +560,7 @@ void ngx_socks_send(ngx_event_t *wev) {
         }
 
         if (s->quit) {
-            ngx_socks_close_connection(c);
+            ngx_socks_proxy_close_session(s);
             return;
         }
 
@@ -572,7 +572,7 @@ void ngx_socks_send(ngx_event_t *wev) {
     }
     
     if (n == NGX_ERROR) {
-        ngx_socks_close_connection(c);
+        ngx_socks_proxy_close_session(s);
         return;
     }
 
@@ -583,21 +583,18 @@ void ngx_socks_send(ngx_event_t *wev) {
     ngx_add_timer(c->write, cscf->timeout);
 
     if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
-        ngx_socks_close_connection(c);
+        ngx_socks_proxy_close_session(s);
         return;
     }
 }
 
 ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
     ssize_t n;
-    ngx_int_t rc;
-    ngx_str_t l;
-    ngx_socks_core_srv_conf_t *cscf;
 
     n = c->recv(c, s->buffer->last, s->buffer->end - s->buffer->last);
 
     if (n == NGX_ERROR || n == 0) {
-        ngx_socks_close_connection(c);
+        ngx_socks_proxy_close_session(s);
         return NGX_ERROR;
     }
 
@@ -644,11 +641,23 @@ void ngx_socks_session_internal_server_error(ngx_socks_session_t *s) {
     ngx_socks_send(s->connection->write);
 }
 
+void ngx_socks_proxy_close_session(ngx_socks_session_t *s) {
+    if (s->proxy && s->proxy->upstream.connection) {
+        ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, s->connection->log, 0,
+                "close socks proxy connection: %d",
+                s->proxy->upstream.connection->fd);
+
+        ngx_close_connection(s->proxy->upstream.connection);
+    }
+
+    ngx_socks_close_connection(s->connection);
+}
+
 void ngx_socks_close_connection(ngx_connection_t *c) {
     ngx_pool_t *pool;
 
-    ngx_log_debug1(NGX_LOG_DEBUG_MAIL, c->log, 0,
-            "close mail connection: %d", c->fd);
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
+            "close socks connection: %d", c->fd);
 
 #if (NGX_MAIL_SSL)
 

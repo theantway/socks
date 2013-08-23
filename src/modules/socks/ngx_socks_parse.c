@@ -30,7 +30,7 @@ static char supported_auth_methods[] = {
 };
 
 ngx_int_t ngx_socks_v5_parse_greeting_command(ngx_socks_session_t *s) {
-    u_char *p, nmethod;
+    u_char nmethod;
     
     //only the first two bytes
     if (s->buffer->last > s->buffer->pos ){
@@ -75,7 +75,7 @@ ngx_socks_v5_parse_command(ngx_socks_session_t *s) {
     switch(socks_state){
         case ngx_socks_state_start:
             if(ngx_socks_v5_parse_greeting_command(s) == NGX_OK){
-                s->socks_state = ngx_socks_state_request;
+                s->socks_state = ngx_socks_state_wait_request;
             }
             break;
         default:

@@ -144,7 +144,10 @@ typedef enum {
     ngx_socks_state_auth_login_username,
     ngx_socks_state_auth_login_password,
     ngx_socks_state_auth_plain,
-    ngx_socks_state_request,
+    ngx_socks_state_wait_request,
+    ngx_socks_state_resolve_requested_host,
+    ngx_socks_state_resolved_requested_host,
+    ngx_socks_state_connecting_requested_host,
     ngx_socks_state_pass_through
 } ngx_socks_state_e;
     
@@ -152,6 +155,12 @@ typedef enum {
     ngx_socks_auth_start=0,
     ngx_socks_auth_password=1,
 } ngx_socks_auth_state_e;
+
+typedef enum {
+    ipv4 = 0x01,
+    hostname = 0x03,
+    ipv6 = 0x04            
+} ngx_socks_address_type_e;
 
 typedef struct {
     u_char version;
@@ -241,6 +250,7 @@ typedef struct {
     u_char *arg_start;
     u_char *arg_end;
     ngx_uint_t literal_len;
+    unsigned short port;
 } ngx_socks_session_t;
 
 typedef struct {
@@ -308,10 +318,11 @@ void ngx_socks_close_connection(ngx_connection_t *c);
 u_char* ngx_socks_log_error(ngx_log_t *log, u_char *buf, size_t len);
 void ngx_socks_session_internal_server_error(ngx_socks_session_t *s);
 ngx_int_t ngx_socks_salt(ngx_socks_session_t *s, ngx_connection_t *c, ngx_socks_core_srv_conf_t *cscf);
-void ngx_socks_close_connection(ngx_connection_t *c);
+void ngx_socks_proxy_close_session(ngx_socks_session_t *s);
 void ngx_socks_send(ngx_event_t *wev);
 
 void ngx_socks_init_connection(ngx_connection_t *c);
+ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c);
 
 #ifdef	__cplusplus
 }
