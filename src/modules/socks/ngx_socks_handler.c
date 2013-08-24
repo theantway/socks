@@ -311,7 +311,7 @@ void ngx_socks_send(ngx_event_t *wev) {
         return;
     }
 
-    if (s->out_buf_chain.chains == NULL) {
+    if (s->out_buffer->last == s->out_buffer->pos) {
         if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
             ngx_socks_proxy_close_session(s);
         }
@@ -319,9 +319,8 @@ void ngx_socks_send(ngx_event_t *wev) {
         return;
     }
 
-    ngx_chain_t * chain = s->out_buf_chain.chains;
-    while(chain != NULL) {
-        ngx_buf_t *buf = chain->buf;
+    while(s->out_buffer->last > s->out_buffer->pos) {
+        ngx_buf_t *buf = s->out_buffer;
         
         n = c->send(c, buf->pos, buf->last - buf->pos);
 
@@ -330,32 +329,21 @@ void ngx_socks_send(ngx_event_t *wev) {
         }
 
         buf->pos += n;
-        
-        if(buf->pos == buf->last) {
-            ngx_chain_t* current_chain = chain;
-            chain = chain->next;
-            
-            ngx_socks_free_buf_chain(&s->out_buf_chain, current_chain);
-            
-            continue;
-        }
-
-        if (wev->timer_set) {
-            ngx_del_timer(wev);
-        }
-
-        if (s->quit) {
-            ngx_socks_proxy_close_session(s);
-            return;
-        }
-
-        if (s->blocked) {
-            c->read->handler(c->read);
-        }
-
-        return;
     }
     
+    if (wev->timer_set) {
+        ngx_del_timer(wev);
+    }
+
+    if (s->quit) {
+        ngx_socks_proxy_close_session(s);
+        return;
+    }
+
+    if (s->blocked) {
+        c->read->handler(c->read);
+    }
+
     if (n == NGX_ERROR) {
         ngx_socks_proxy_close_session(s);
         return;

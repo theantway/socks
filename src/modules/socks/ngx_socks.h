@@ -179,10 +179,6 @@ typedef struct {
     ngx_pool_t *pool;
 } ngx_socks_buf_chains_t;
 
-ngx_chain_t* ngx_socks_alloc_chain(ngx_socks_buf_chains_t *chains);
-void ngx_socks_init_buf_chain(ngx_socks_buf_chains_t *chains, ngx_pool_t *pool);
-void ngx_socks_free_buf_chain(ngx_socks_buf_chains_t *chains, ngx_chain_t *chain);
-
 typedef struct {
     ngx_connection_t *connection;
 
@@ -190,6 +186,7 @@ typedef struct {
     ngx_socks_buf_chains_t out_buf_chain;
     
     ngx_buf_t *buffer;
+    ngx_buf_t *out_buffer;
     ngx_buf_t *upstream_buffer;
 
     void **ctx;
