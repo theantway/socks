@@ -274,23 +274,6 @@ ngx_socks_init_session(ngx_connection_t *c) {
     cscf->protocol->init_session(s, c);
 }
 
-ngx_int_t ngx_socks_salt(ngx_socks_session_t *s, ngx_connection_t *c, ngx_socks_core_srv_conf_t *cscf) {
-    s->salt.data = ngx_pnalloc(c->pool,
-            sizeof (" <18446744073709551616.@>" CRLF) - 1
-            + NGX_TIME_T_LEN
-            + cscf->server_name.len);
-    if (s->salt.data == NULL) {
-        return NGX_ERROR;
-    }
-
-    s->salt.len = ngx_sprintf(s->salt.data, "<%ul.%T@%V>" CRLF,
-            ngx_random(), ngx_time(), &cscf->server_name)
-            - s->salt.data;
-
-    return NGX_OK;
-}
-
-
 #if (NGX_MAIL_SSL)
 
 ngx_int_t
@@ -311,194 +294,6 @@ ngx_socks_starttls_only(ngx_socks_session_t *s, ngx_connection_t *c) {
 }
 
 #endif
-
-ngx_int_t ngx_socks_auth_plain(ngx_socks_session_t *s, ngx_connection_t *c, ngx_uint_t n) {
-    u_char *p, *last;
-    ngx_str_t *arg, plain;
-
-    arg = s->args.elts;
-
-#if (NGX_DEBUG_MAIL_PASSWD)
-    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "mail auth plain: \"%V\"", &arg[n]);
-#endif
-
-    plain.data = ngx_pnalloc(c->pool, ngx_base64_decoded_length(arg[n].len));
-    if (plain.data == NULL) {
-        return NGX_ERROR;
-    }
-
-    if (ngx_decode_base64(&plain, &arg[n]) != NGX_OK) {
-        ngx_log_error(NGX_LOG_INFO, c->log, 0,
-                "client sent invalid base64 encoding in AUTH PLAIN command");
-        return NGX_SOCKS_PARSE_INVALID_COMMAND;
-    }
-
-    p = plain.data;
-    last = p + plain.len;
-
-    while (p < last && *p++) {
-        /* void */
-    }
-
-    if (p == last) {
-        ngx_log_error(NGX_LOG_INFO, c->log, 0,
-                "client sent invalid login in AUTH PLAIN command");
-        return NGX_SOCKS_PARSE_INVALID_COMMAND;
-    }
-
-    s->login.data = p;
-
-    while (p < last && *p) {
-        p++;
-    }
-
-    if (p == last) {
-        ngx_log_error(NGX_LOG_INFO, c->log, 0,
-                "client sent invalid password in AUTH PLAIN command");
-        return NGX_SOCKS_PARSE_INVALID_COMMAND;
-    }
-
-    s->login.len = p++ - s->login.data;
-
-    s->passwd.len = last - p;
-    s->passwd.data = p;
-
-#if (NGX_DEBUG_MAIL_PASSWD)
-    ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "mail auth plain: \"%V\" \"%V\"", &s->login, &s->passwd);
-#endif
-
-    return NGX_DONE;
-}
-
-ngx_int_t
-ngx_socks_auth_login_username(ngx_socks_session_t *s, ngx_connection_t *c,
-        ngx_uint_t n) {
-    ngx_str_t *arg;
-
-    arg = s->args.elts;
-
-    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "mail auth login username: \"%V\"", &arg[n]);
-
-    s->login.data = ngx_pnalloc(c->pool, ngx_base64_decoded_length(arg[n].len));
-    if (s->login.data == NULL) {
-        return NGX_ERROR;
-    }
-
-    if (ngx_decode_base64(&s->login, &arg[n]) != NGX_OK) {
-        ngx_log_error(NGX_LOG_INFO, c->log, 0,
-                "client sent invalid base64 encoding in AUTH LOGIN command");
-        return NGX_SOCKS_PARSE_INVALID_COMMAND;
-    }
-
-    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "mail auth login username: \"%V\"", &s->login);
-
-    return NGX_OK;
-}
-
-ngx_int_t
-ngx_socks_auth_login_password(ngx_socks_session_t *s, ngx_connection_t *c) {
-    ngx_str_t *arg;
-
-    arg = s->args.elts;
-
-#if (NGX_DEBUG_MAIL_PASSWD)
-    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "mail auth login password: \"%V\"", &arg[0]);
-#endif
-
-    s->passwd.data = ngx_pnalloc(c->pool,
-            ngx_base64_decoded_length(arg[0].len));
-    if (s->passwd.data == NULL) {
-        return NGX_ERROR;
-    }
-
-    if (ngx_decode_base64(&s->passwd, &arg[0]) != NGX_OK) {
-        ngx_log_error(NGX_LOG_INFO, c->log, 0,
-                "client sent invalid base64 encoding in AUTH LOGIN command");
-        return NGX_SOCKS_PARSE_INVALID_COMMAND;
-    }
-
-#if (NGX_DEBUG_MAIL_PASSWD)
-    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "mail auth login password: \"%V\"", &s->passwd);
-#endif
-
-    return NGX_DONE;
-}
-
-ngx_int_t
-ngx_socks_auth_cram_md5_salt(ngx_socks_session_t *s, ngx_connection_t *c,
-        char *prefix, size_t len) {
-    u_char *p;
-    ngx_str_t salt;
-    ngx_uint_t n;
-
-    p = ngx_pnalloc(c->pool, len + ngx_base64_encoded_length(s->salt.len) + 2);
-    if (p == NULL) {
-        return NGX_ERROR;
-    }
-
-    salt.data = ngx_cpymem(p, prefix, len);
-    s->salt.len -= 2;
-
-    ngx_encode_base64(&salt, &s->salt);
-
-    s->salt.len += 2;
-    n = len + salt.len;
-    p[n++] = CR;
-    p[n++] = LF;
-
-    return NGX_OK;
-}
-
-ngx_int_t
-ngx_socks_auth_cram_md5(ngx_socks_session_t *s, ngx_connection_t *c) {
-    u_char *p, *last;
-    ngx_str_t *arg;
-
-    arg = s->args.elts;
-
-    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "mail auth cram-md5: \"%V\"", &arg[0]);
-
-    s->login.data = ngx_pnalloc(c->pool, ngx_base64_decoded_length(arg[0].len));
-    if (s->login.data == NULL) {
-        return NGX_ERROR;
-    }
-
-    if (ngx_decode_base64(&s->login, &arg[0]) != NGX_OK) {
-        ngx_log_error(NGX_LOG_INFO, c->log, 0,
-                "client sent invalid base64 encoding in AUTH CRAM-MD5 command");
-        return NGX_SOCKS_PARSE_INVALID_COMMAND;
-    }
-
-    p = s->login.data;
-    last = p + s->login.len;
-
-    while (p < last) {
-        if (*p++ == ' ') {
-            s->login.len = p - s->login.data - 1;
-            s->passwd.len = last - p;
-            s->passwd.data = p;
-            break;
-        }
-    }
-
-    if (s->passwd.len != 32) {
-        ngx_log_error(NGX_LOG_INFO, c->log, 0,
-                "client sent invalid CRAM-MD5 hash in AUTH CRAM-MD5 command");
-        return NGX_SOCKS_PARSE_INVALID_COMMAND;
-    }
-
-    ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "mail auth cram-md5: \"%V\" \"%V\"", &s->login, &s->passwd);
-
-    return NGX_DONE;
-}
 
 void ngx_socks_send(ngx_event_t *wev) {
     ngx_int_t n;
@@ -606,10 +401,8 @@ ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
 
 void
 ngx_socks_auth(ngx_socks_session_t *s, ngx_connection_t *c) {
-    s->args.nelts = 0;
     s->buffer->pos = s->buffer->start;
     s->buffer->last = s->buffer->start;
-    s->state = 0;
 
     if (c->read->timer_set) {
         ngx_del_timer(c->read);
@@ -629,6 +422,11 @@ void ngx_socks_session_internal_server_error(ngx_socks_session_t *s) {
 }
 
 void ngx_socks_proxy_close_session(ngx_socks_session_t *s) {
+    if(s->resolver_ctx != NULL) {
+        ngx_resolve_name_done(s->resolver_ctx);
+        s->resolver_ctx = NULL;
+    }
+    
     if (s->proxy && s->proxy->upstream.connection) {
         ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, s->connection->log, 0,
                 "close socks proxy connection: %d",

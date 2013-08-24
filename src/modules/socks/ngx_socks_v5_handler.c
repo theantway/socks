@@ -19,7 +19,6 @@ static u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size);
 static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_connection_t *c, ngx_int_t family, void* address, short port);
 
 static ngx_str_t socks5_unavailable = ngx_string("[UNAVAILABLE]");
-static ngx_str_t socks5_tempunavail = ngx_string("[TEMPUNAVAIL]");
 
 void ngx_socks_v5_init_session(ngx_socks_session_t *s, ngx_connection_t *c) {
     ngx_socks_core_srv_conf_t *cscf;
@@ -35,15 +34,14 @@ static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *
     ngx_resolver_ctx_t *ctx;
     ngx_socks_core_srv_conf_t *cscf;
 
-    cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
-
     in_addr_t addr = ngx_inet_addr(name->data, name->len);
-    if(addr != INADDR_NONE) {
+    if (addr != INADDR_NONE) {
         ngx_log_debug(NGX_LOG_DEBUG_SOCKS, c->log, 0, "Found ip address during resolve name, using address directly");
         ngx_socks_v5_connect_upstream(s, c, AF_INET, (struct in_addr*) &addr, s->port);
         return;
     }
     
+    cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
     ctx = ngx_resolve_start(cscf->resolver, NULL);
     if (ctx == NULL) {
         ngx_socks_proxy_close_session(s);
@@ -56,16 +54,16 @@ static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *
     ctx->handler = ngx_socks_v5_resolve_name_handler;
     ctx->data = s;
     ctx->timeout = cscf->resolver_timeout;
-
+    
     if (ngx_resolve_name(ctx) != NGX_OK) {
         ngx_socks_proxy_close_session(s);
     }
+    s->resolver_ctx = ctx;
 }
 
 static void
 ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
     in_addr_t addr;
-    ngx_uint_t i;
     ngx_connection_t *c;
     ngx_socks_session_t *s;
     
@@ -77,16 +75,11 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
                 "\"%V\" could not be resolved (%i: %s)",
                 &s->host, ctx->state,
                 ngx_resolver_strerror(ctx->state));
-
-        if (ctx->state == NGX_RESOLVE_NXDOMAIN) {
-            s->host = socks5_unavailable;
-        } else {
-            s->host = socks5_tempunavail;
-        }
+        ngx_socks_proxy_close_session(s);
     } else {
         /* AF_INET only */
-        for (i = 0; i < ctx->naddrs; i++) {
-            addr = ctx->addrs[i];
+        if (ctx->naddrs > 0) {
+            addr = ctx->addrs[0];
             ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, 
                     "name '%V' was resolved to %ud.%ud.%ud.%ud",
                     &s->host,
@@ -94,14 +87,12 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
                     (ntohl(addr) >> 16) & 0xff,
                     (ntohl(addr) >> 8) & 0xff,
                     ntohl(addr) & 0xff);
-
-            break;
         }
-    }
 
-    ngx_resolve_name_done(ctx);
-    
-    ngx_socks_v5_connect_upstream(s, c, AF_INET, (struct in_addr*) &addr, s->port);
+//        ngx_resolve_name_done(ctx);
+//        s->resolver_ctx = NULL;
+        ngx_socks_v5_connect_upstream(s, c, AF_INET, (struct in_addr*) &addr, s->port);
+    }
 }
 
 static void
@@ -162,11 +153,6 @@ ngx_socks_v5_init_protocol(ngx_event_t *rev) {
 static ngx_buf_t*
 ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c) {
     ngx_socks_v5_srv_conf_t *sscf;
-
-    if (ngx_array_init(&s->args, c->pool, 2, sizeof (ngx_str_t)) == NGX_ERROR) {
-        ngx_socks_session_internal_server_error(s);
-        return NULL;
-    }
 
     sscf = ngx_socks_get_module_srv_conf(s, ngx_socks_v5_module);
 
@@ -352,6 +338,9 @@ static void ngx_socks_v5_pass_through(ngx_event_t *rev) {
     }
     
     do_write = rev->write ? true : false;
+
+    ngx_log_debug(NGX_LOG_DEBUG_SOCKS, s->connection->log, 0,
+            "Started transfer data between upstream and client");
 
     while(true) {
         if (do_write) {
@@ -668,6 +657,13 @@ ngx_http_upstream_test_connect(ngx_connection_t *c) {
     return NGX_OK;
 }
 
+static void ngx_socks_del_timer(ngx_socks_session_t *s, ngx_event_t *ev, char *message) {
+    if(ev->timer_set) {
+        ngx_del_timer(ev);
+        ngx_log_debug0(NGX_LOG_DEBUG_SOCKS, s->connection->log, 0, message);
+    }
+}
+
 static void ngx_socks_proxy_connected(ngx_event_t *rev) {
     ngx_connection_t *c;
     ngx_socks_session_t *s;
@@ -678,8 +674,11 @@ static void ngx_socks_proxy_connected(ngx_event_t *rev) {
     s = c->data;
     
     if (ngx_http_upstream_test_connect(c) != NGX_OK) {
+        ngx_log_debug(NGX_LOG_DEBUG_SOCKS, rev->log, 0, "socks upstream has not been connected, will try again later");
         return;
     }
+
+    ngx_log_debug(NGX_LOG_DEBUG_SOCKS, rev->log, 0, "socks upstream connected, start to send response to client");
 
     //send the new ip and port for request
     int response_addr_len = strlen((char*)server_host);
@@ -735,6 +734,11 @@ static void ngx_socks_proxy_connected(ngx_event_t *rev) {
     s->proxy->upstream.connection->write->handler = ngx_socks_v5_pass_through;
     ngx_del_timer(s->proxy->upstream.connection->read);
     
+    ngx_socks_del_timer(s, s->connection->read, "Delete client read timer");
+    ngx_socks_del_timer(s, s->connection->write, "Delete client write timer");
+    ngx_socks_del_timer(s, s->proxy->upstream.connection->read, "Delete upstream read timer");
+    ngx_socks_del_timer(s, s->proxy->upstream.connection->write, "Delete upstream write timer");
+
     s->socks_state = ngx_socks_state_pass_through;
 }
 
@@ -795,13 +799,8 @@ ngx_socks_v5_auth_state(ngx_event_t *rev) {
             s->socks_state = ngx_socks_state_wait_request;
             // continue NGX_OK to write to client, 
         case NGX_OK:
-            s->args.nelts = 0;
             s->buffer->pos = s->buffer->start;
             s->buffer->last = s->buffer->start;
-
-            if (s->state) {
-                s->arg_start = s->buffer->start;
-            }
 
             ngx_socks_send(c->write);
     }

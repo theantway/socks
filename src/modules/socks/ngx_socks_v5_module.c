@@ -1,11 +1,3 @@
-
-
-/*
- * Copyright (C) Igor Sysoev
- * Copyright (C) Nginx, Inc.
- */
-
-
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_event.h>
@@ -36,13 +28,9 @@ static ngx_socks_protocol_t ngx_socks_v5_protocol = {
     NGX_SOCKS_V5,
 
     ngx_socks_v5_init_session,
-    ngx_socks_v5_init_protocol,
-    ngx_socks_v5_parse_command,
-    ngx_socks_v5_auth_state,
 
-    ngx_string("451 4.3.2 Internal server error" CRLF)
+    ngx_string("SOCKS5: Internal server error" CRLF)
 };
-
 
 static ngx_command_t ngx_socks_v5_commands[] = {
 
@@ -52,20 +40,6 @@ static ngx_command_t ngx_socks_v5_commands[] = {
         NGX_MAIL_SRV_CONF_OFFSET,
         offsetof(ngx_socks_v5_srv_conf_t, client_buffer_size),
         NULL},
-
-//    { ngx_string("v5_greeting_delay"),
-//        NGX_MAIL_MAIN_CONF | NGX_MAIL_SRV_CONF | NGX_CONF_TAKE1,
-//        ngx_conf_set_msec_slot,
-//        NGX_MAIL_SRV_CONF_OFFSET,
-//        offsetof(ngx_socks_v5_srv_conf_t, greeting_delay),
-//        NULL},
-//
-//    { ngx_string("v5_capabilities"),
-//        NGX_MAIL_MAIN_CONF | NGX_MAIL_SRV_CONF | NGX_CONF_1MORE,
-//        ngx_socks_capabilities,
-//        NGX_MAIL_SRV_CONF_OFFSET,
-//        offsetof(ngx_socks_v5_srv_conf_t, capabilities),
-//        NULL},
 
     { ngx_string("v5_auth"),
         NGX_MAIL_MAIN_CONF | NGX_MAIL_SRV_CONF | NGX_CONF_1MORE,

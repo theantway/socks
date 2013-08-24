@@ -1,10 +1,3 @@
-/* 
- * File:   ngx_socks.h
- * Author: wxu
- *
- * Created on July 28, 2013, 8:38 PM
- */
-
 #ifndef NGX_SOCKS_H
 #define	NGX_SOCKS_H
 
@@ -191,8 +184,6 @@ void ngx_socks_init_buf_chain(ngx_socks_buf_chains_t *chains, ngx_pool_t *pool);
 void ngx_socks_free_buf_chain(ngx_socks_buf_chains_t *chains, ngx_chain_t *chain);
 
 typedef struct {
-    uint32_t signature; /* "MAIL" */
-
     ngx_connection_t *connection;
 
     ngx_socks_buf_chains_t in_buf_chain;
@@ -216,11 +207,7 @@ typedef struct {
     unsigned protocol : 3;
     unsigned blocked : 1;
     unsigned quit : 1;
-    unsigned quoted : 1;
-    unsigned backslash : 1;
-    unsigned no_sync_literal : 1;
     unsigned starttls : 1;
-    unsigned esmtp : 1;
     
     unsigned auth_wait : 1;
 
@@ -228,28 +215,11 @@ typedef struct {
     ngx_str_t login;
     ngx_str_t passwd;
 
-    ngx_str_t salt;
-    ngx_str_t tag;
-    ngx_str_t tagged_line;
-    ngx_str_t text;
-
     ngx_str_t *addr_text;
     ngx_str_t host;
-    ngx_str_t smtp_helo;
-    ngx_str_t smtp_from;
-    ngx_str_t smtp_to;
-
-    ngx_uint_t command;
-    ngx_array_t args;
 
     ngx_uint_t login_attempt;
 
-    /* used to parse POP3/IMAP/SMTP command */
-    ngx_uint_t state;
-    u_char *cmd_start;
-    u_char *arg_start;
-    u_char *arg_end;
-    ngx_uint_t literal_len;
     unsigned short port;
 } ngx_socks_session_t;
 
@@ -261,9 +231,6 @@ typedef struct {
 
 typedef void (*ngx_socks_init_session_pt)(ngx_socks_session_t *s,
         ngx_connection_t *c);
-typedef void (*ngx_socks_init_protocol_pt)(ngx_event_t *rev);
-typedef void (*ngx_socks_auth_state_pt)(ngx_event_t *rev);
-typedef ngx_int_t(*ngx_socks_parse_command_pt)(ngx_socks_session_t *s);
 
 struct ngx_socks_protocol_s {
     ngx_str_t name;
@@ -271,9 +238,6 @@ struct ngx_socks_protocol_s {
     ngx_uint_t type;
 
     ngx_socks_init_session_pt init_session;
-    ngx_socks_init_protocol_pt init_protocol;
-    ngx_socks_parse_command_pt parse_command;
-    ngx_socks_auth_state_pt auth_state;
 
     ngx_str_t internal_server_error;
 };
@@ -311,13 +275,9 @@ struct ngx_socks_protocol_s {
 extern ngx_uint_t ngx_socks_max_module;
 extern ngx_module_t ngx_socks_core_module;
 
-
-ngx_int_t ngx_socks_auth_plain(ngx_socks_session_t *s, ngx_connection_t *c, ngx_uint_t n);
-//static void ngx_socks_init_session(ngx_connection_t *c);
 void ngx_socks_close_connection(ngx_connection_t *c);
 u_char* ngx_socks_log_error(ngx_log_t *log, u_char *buf, size_t len);
 void ngx_socks_session_internal_server_error(ngx_socks_session_t *s);
-ngx_int_t ngx_socks_salt(ngx_socks_session_t *s, ngx_connection_t *c, ngx_socks_core_srv_conf_t *cscf);
 void ngx_socks_proxy_close_session(ngx_socks_session_t *s);
 void ngx_socks_send(ngx_event_t *wev);
 
