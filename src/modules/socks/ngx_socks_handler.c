@@ -5,12 +5,6 @@
 
 static void ngx_socks_init_session(ngx_connection_t *c);
 
-void ngx_socks_init_buf_chain(ngx_socks_buf_chains_t *chain, ngx_pool_t *pool) {
-    chain->pool = pool;
-    chain->chains = NULL;
-    chain->free_chains = NULL;
-}
-
 void ngx_socks_init_connection(ngx_connection_t *c) {
     ngx_uint_t i;
     ngx_socks_port_t *port;
@@ -114,9 +108,6 @@ void ngx_socks_init_connection(ngx_connection_t *c) {
 
     s->addr_text = &addr_conf->addr_text;
 
-    ngx_socks_init_buf_chain(&s->in_buf_chain, c->pool);
-    ngx_socks_init_buf_chain(&s->out_buf_chain, c->pool);
-    
     c->data = s;
     s->connection = c;
 
@@ -410,11 +401,6 @@ void ngx_socks_session_internal_server_error(ngx_socks_session_t *s) {
 }
 
 void ngx_socks_proxy_close_session(ngx_socks_session_t *s) {
-    if(s->resolver_ctx != NULL) {
-        ngx_resolve_name_done(s->resolver_ctx);
-        s->resolver_ctx = NULL;
-    }
-    
     if (s->proxy && s->proxy->upstream.connection) {
         ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, s->connection->log, 0,
                 "close socks proxy connection: %d",
@@ -479,15 +465,15 @@ u_char* ngx_socks_log_error(ngx_log_t *log, u_char *buf, size_t len) {
         return p;
     }
 
-    p = ngx_snprintf(buf, len, "%s, server: %V",
-            s->starttls ? " using starttls" : "",
-            s->addr_text);
-    len -= p - buf;
-    buf = p;
-
-    if (s->login.len == 0) {
-        return p;
-    }
+//    p = ngx_snprintf(buf, len, "%s, server: %V",
+//            s->starttls ? " using starttls" : "",
+//            s->addr_text);
+//    len -= p - buf;
+//    buf = p;
+//
+//    if (s->login.len == 0) {
+//        return p;
+//    }
 
     p = ngx_snprintf(buf, len, ", login: \"%V\"", &s->login);
     len -= p - buf;

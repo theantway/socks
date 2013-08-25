@@ -12,37 +12,39 @@ static void ngx_socks_proxy_connected(ngx_event_t *rev);
 static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx_connection_t *c, ngx_addr_t *peer);
 static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *c, ngx_str_t *name);
 static void ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx);
-static void ngx_socks_v5_greeting(ngx_socks_session_t *s, ngx_connection_t *c);
-static ngx_buf_t* ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c);
+static ngx_int_t ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c, ngx_buf_t **buf, char* buf_type);
 static void ngx_socks_v5_pass_through(ngx_event_t *rev);
 static u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size);
 static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_connection_t *c, ngx_int_t family, void* address, short port);
 
-static ngx_str_t socks5_unavailable = ngx_string("[UNAVAILABLE]");
-
 void ngx_socks_v5_init_session(ngx_socks_session_t *s, ngx_connection_t *c) {
+    ngx_msec_t timeout;
     ngx_socks_core_srv_conf_t *cscf;
-    s->pool = ngx_create_pool(1024, c->log);
+    ngx_socks_v5_srv_conf_t *sscf;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_SOCKS, c->log, 0, "socks connected from client");
 
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
+    sscf = ngx_socks_get_module_srv_conf(s, ngx_socks_v5_module);
 
-    s->host = socks5_unavailable;
-    ngx_socks_v5_greeting(s, c);
+    timeout = sscf->greeting_delay ? sscf->greeting_delay : cscf->timeout;
+    ngx_add_timer(c->read, timeout);
+
+    if (ngx_handle_read_event(c->read, 0) != NGX_OK) {
+        ngx_socks_proxy_close_session(s);
+    }
+
+    c->read->handler = ngx_socks_v5_init_protocol;
 }
 
 static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *c, ngx_str_t *name) {
-    ngx_resolver_ctx_t *ctx;
+    ngx_resolver_ctx_t *ctx, temp;
     ngx_socks_core_srv_conf_t *cscf;
 
-    in_addr_t addr = ngx_inet_addr(name->data, name->len);
-    if (addr != INADDR_NONE) {
-        ngx_log_debug(NGX_LOG_DEBUG_SOCKS, c->log, 0, "Found ip address during resolve name, using address directly");
-        ngx_socks_v5_connect_upstream(s, c, AF_INET, (struct in_addr*) &addr, s->port);
-        return;
-    }
+    temp.name = *name;
     
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
-    ctx = ngx_resolve_start(cscf->resolver, NULL);
+    ctx = ngx_resolve_start(cscf->resolver, &temp);
     if (ctx == NULL) {
         ngx_socks_proxy_close_session(s);
         return;
@@ -80,7 +82,7 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
         /* AF_INET only */
         if (ctx->naddrs > 0) {
             addr = ctx->addrs[0];
-            ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, 
+            ngx_log_debug5(NGX_LOG_DEBUG_SOCKS, c->log, 0, 
                     "name '%V' was resolved to %ud.%ud.%ud.%ud",
                     &s->host,
                     (ntohl(addr) >> 24) & 0xff,
@@ -89,31 +91,12 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
                     ntohl(addr) & 0xff);
         }
 
-//        ngx_resolve_name_done(ctx);
-//        s->resolver_ctx = NULL;
         ngx_socks_v5_connect_upstream(s, c, AF_INET, (struct in_addr*) &addr, s->port);
     }
-}
 
-static void
-ngx_socks_v5_greeting(ngx_socks_session_t *s, ngx_connection_t *c) {
-    ngx_msec_t timeout;
-    ngx_socks_core_srv_conf_t *cscf;
-    ngx_socks_v5_srv_conf_t *sscf;
-
-    ngx_log_debug0(NGX_LOG_DEBUG_SOCKS, c->log, 0, "socks connected from client");
-
-    cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
-    sscf = ngx_socks_get_module_srv_conf(s, ngx_socks_v5_module);
-
-    timeout = sscf->greeting_delay ? sscf->greeting_delay : cscf->timeout;
-    ngx_add_timer(c->read, timeout);
-
-    if (ngx_handle_read_event(c->read, 0) != NGX_OK) {
-        ngx_socks_proxy_close_session(s);
-    }
-
-    c->read->handler = ngx_socks_v5_init_protocol;
+    ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0, "socks resolve name done in handler session: %p, ctx: %p", s, ctx);
+    ngx_resolve_name_done(ctx);
+    s->resolver_ctx = NULL;
 }
 
 void
@@ -133,26 +116,14 @@ ngx_socks_v5_init_protocol(ngx_event_t *rev) {
         return;
     }
 
-    if (s->buffer == NULL) {
-        s->buffer = ngx_socks_v5_create_buffer(s, c);
-        
-        if (s->buffer == NULL) {
-            ngx_log_error(NGX_LOG_ERR, c->log, 0, "Could not create buffer for client request");
-            ngx_socks_session_internal_server_error(s);
-            return;
-        }
+    if(ngx_socks_v5_create_buffer(s, c, &s->buffer, "client request") != NGX_OK) {
+        return;
     }
-
-    if (s->out_buffer == NULL) {
-        s->out_buffer = ngx_socks_v5_create_buffer(s, c);
-        
-        if (s->out_buffer == NULL) {
-            ngx_log_error(NGX_LOG_ERR, c->log, 0, "Could not create buffer for client request");
-            ngx_socks_session_internal_server_error(s);
-            return;
-        }
+    
+    if(ngx_socks_v5_create_buffer(s, c, &s->out_buffer, "client response") != NGX_OK) {
+        return;
     }
-
+    
     s->socks_state = ngx_socks_state_start;
     c->read->handler = ngx_socks_v5_handle_client_request;
     s->protocol = NGX_SOCKS_V5;
@@ -160,13 +131,25 @@ ngx_socks_v5_init_protocol(ngx_event_t *rev) {
     ngx_socks_v5_handle_client_request(rev);
 }
 
-static ngx_buf_t*
-ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c) {
+static ngx_int_t ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c, ngx_buf_t **buf, char* buf_type) {
     ngx_socks_v5_srv_conf_t *sscf;
 
-    sscf = ngx_socks_get_module_srv_conf(s, ngx_socks_v5_module);
+    ngx_log_error(NGX_LOG_ERR, c->log, 0, "create buffer for %s", buf_type);
+    
+    if(*buf == NULL) {
+        sscf = ngx_socks_get_module_srv_conf(s, ngx_socks_v5_module);
 
-    return ngx_create_temp_buf(c->pool, sscf->client_buffer_size);
+        *buf = ngx_create_temp_buf(c->pool, sscf->client_buffer_size);
+        
+        if(*buf == NULL) {
+            ngx_log_error(NGX_LOG_ERR, c->log, 0, "Could not create buffer for %s", buf_type);
+            ngx_socks_session_internal_server_error(s);
+            
+            return NGX_ERROR;
+        }
+    }
+    
+    return NGX_OK;
 }
 
 char* char2hex(char c, char* hex) {
@@ -675,14 +658,8 @@ static void ngx_socks_proxy_connected(ngx_event_t *rev) {
 
     ngx_socks_send(s->connection->write);
 
-    if (s->upstream_buffer == NULL) {
-        s->upstream_buffer = ngx_socks_v5_create_buffer(s, c);
-
-        if (s->upstream_buffer == NULL) {
-            ngx_log_error(NGX_LOG_ERR, c->log, 0, "Could not create buffer for upstream response");
-            ngx_socks_session_internal_server_error(s);
-            return;
-        }
+    if (ngx_socks_v5_create_buffer(s, c, &s->upstream_buffer, "upstream response") != NGX_OK) {
+        return;
     }
 
     s->proxy->upstream.connection->read->handler = ngx_socks_v5_pass_through;

@@ -182,9 +182,6 @@ typedef struct {
 typedef struct {
     ngx_connection_t *connection;
 
-    ngx_socks_buf_chains_t in_buf_chain;
-    ngx_socks_buf_chains_t out_buf_chain;
-    
     ngx_buf_t *buffer;
     ngx_buf_t *out_buffer;
     ngx_buf_t *upstream_buffer;
@@ -192,7 +189,7 @@ typedef struct {
     void **ctx;
     void **main_conf;
     void **srv_conf;
-    ngx_pool_t *pool;
+//    ngx_pool_t *pool;
 
     ngx_resolver_ctx_t *resolver_ctx;
 
