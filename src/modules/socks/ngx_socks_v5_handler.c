@@ -152,31 +152,9 @@ static ngx_int_t ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connecti
     return NGX_OK;
 }
 
-char* char2hex(char c, char* hex) {
-    const char* hex_symbols = "0123456789ABCDEF";
-
-    hex[0] = *(hex_symbols + ((c & 0xF0) >> 4));
-    hex[1] = *(hex_symbols + (c & 0x0F));
-
-    return hex;
-}
-
-static char supported_auth_methods[] = {
-    0x00, /*'00' NO AUTHENTICATION REQUIRED*/
-    0x01, /*'01' GSSAPI*/
-    0x02, /*'02' USERNAME / PASSWORD */
-    /*'03' to X'7F' IANA ASSIGNED
-      '80' to X'FE' RESERVED FOR PRIVATE METHODS
-     */
-    0xFF /*'FF' NO ACCEPTABLE METHODS*/
-};
-
 ngx_int_t ngx_socks_v5_response_auth_methods(ngx_socks_session_t *s) {
-    u_char nmethod;
     ngx_connection_t *c;
     
-    char hexMethod[2];
-
     if (s->buffer->last - s->buffer->pos + 1 <= 2) {
         return NGX_AGAIN;
     }
@@ -193,22 +171,18 @@ ngx_int_t ngx_socks_v5_response_auth_methods(ngx_socks_session_t *s) {
 
     c = s->connection;
     
-    //choose the auth methods in order: no auth, USER/PWD
-    for (nmethod = 0; nmethod < sizeof (supported_auth_methods); nmethod++) {
-        ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0, "checking auth method: '%*s'", 2, char2hex(supported_auth_methods[nmethod], hexMethod));
-        
-        for (size_t method = 0; method < nmethods; method++) {
-            if (*(s->buffer->pos + 2 + method) == supported_auth_methods[nmethod]) {
-                ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0, "Using auth method: '%*s'", 2, char2hex(supported_auth_methods[nmethod], hexMethod));
-                
-                ngx_socks_auth_method_response_t* response = (ngx_socks_auth_method_response_t*)s->out_buffer->pos;
-                response->version = 0x05;
-                response->method = supported_auth_methods[nmethod];
-                
-                s->out_buffer->last += sizeof (ngx_socks_auth_method_response_t); 
-                
-                return NGX_DONE;
-            }
+    //The only supported auth method: no auth
+    for (size_t method = 0; method < nmethods; method++) {
+        if (*(s->buffer->pos + 2 + method) == 0x00) {
+            ngx_log_debug0(NGX_LOG_DEBUG_SOCKS, c->log, 0, "Using auth method: '0x00'");
+
+            ngx_socks_auth_method_response_t* response = (ngx_socks_auth_method_response_t*)s->out_buffer->pos;
+            response->version = 0x05;
+            response->method = 0x00;
+
+            s->out_buffer->last += sizeof (ngx_socks_auth_method_response_t); 
+
+            return NGX_DONE;
         }
     }
 
@@ -451,41 +425,41 @@ static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_conne
 static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx_connection_t *c, ngx_addr_t *peer) {
     ngx_int_t rc;    
 
-    ngx_socks_proxy_ctx_t *proxy_context = ngx_pcalloc(s->connection->pool, sizeof (*proxy_context));
-    if (proxy_context == NULL) {
+    ngx_socks_proxy_ctx_t *proxy = ngx_pcalloc(s->connection->pool, sizeof (*proxy));
+    if (proxy == NULL) {
         ngx_socks_session_internal_server_error(s);
         return NGX_ERROR;
     }
-    proxy_context->upstream.data = s;
-    s->proxy = proxy_context;
+    proxy->upstream.data = s;
+    s->proxy = proxy;
 
-    proxy_context->upstream.sockaddr = peer->sockaddr;
-    proxy_context->upstream.socklen = peer->socklen;
-    proxy_context->upstream.name = &peer->name;
-    proxy_context->upstream.get = ngx_event_get_peer;
-    proxy_context->upstream.log = s->connection->log;
-    proxy_context->upstream.log_error = NGX_ERROR_ERR;
+    proxy->upstream.sockaddr = peer->sockaddr;
+    proxy->upstream.socklen = peer->socklen;
+    proxy->upstream.name = &peer->name;
+    proxy->upstream.get = ngx_event_get_peer;
+    proxy->upstream.log = s->connection->log;
+    proxy->upstream.log_error = NGX_ERROR_ERR;
 
     ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "requesting url: %V:%ud ", &peer->name, ntohs(((struct sockaddr_in*) peer->sockaddr)->sin_port));
 
-    rc = ngx_event_connect_peer(&proxy_context->upstream);
+    rc = ngx_event_connect_peer(&proxy->upstream);
 
     if (rc == NGX_ERROR || rc == NGX_BUSY || rc == NGX_DECLINED) {
         ngx_socks_session_internal_server_error(s);
         return NGX_ERROR;
     }
 
-    proxy_context->upstream.connection->read->handler = ngx_socks_proxy_block_read;
-    proxy_context->upstream.connection->write->handler = ngx_socks_proxy_connected;
+    proxy->upstream.connection->read->handler = ngx_socks_proxy_block_read;
+    proxy->upstream.connection->write->handler = ngx_socks_proxy_connected;
 
     ngx_socks_core_srv_conf_t *cscf;
 
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
 
-    ngx_add_timer(proxy_context->upstream.connection->read, cscf->timeout);
+    ngx_add_timer(proxy->upstream.connection->read, cscf->timeout);
 
-    proxy_context->upstream.connection->data = s;
-    proxy_context->upstream.connection->pool = s->connection->pool;
+    proxy->upstream.connection->data = s;
+    proxy->upstream.connection->pool = s->connection->pool;
     
     return NGX_OK;
 }
@@ -583,8 +557,7 @@ static void ngx_socks_proxy_block_read(ngx_event_t *rev) {
         c = rev->data;
         s = c->data;
 
-        ngx_log_debug(NGX_LOG_DEBUG_SOCKS, s->connection->log, 0,
-        "Failed in socks_proxy_block_read, closing connections");
+        ngx_log_debug(NGX_LOG_DEBUG_SOCKS, s->connection->log, 0, "Failed in socks_proxy_block_read, closing connections");
 
         ngx_socks_proxy_close_session(s);
     }
@@ -633,7 +606,6 @@ static void ngx_socks_proxy_connected(ngx_event_t *rev) {
 
     ngx_log_debug0(NGX_LOG_DEBUG_SOCKS, rev->log, 0, "socks upstream connected, start to send response to client");
 
-    //send the new ip and port for request
     int response_addr_len = strlen((char*)server_host);
 
     ngx_socks_request_response_t* response = (ngx_socks_request_response_t*) s->out_buffer->pos;

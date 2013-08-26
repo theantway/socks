@@ -248,6 +248,7 @@ void ngx_socks_session_internal_server_error(ngx_socks_session_t *s) {
 
     s->quit = 1;
 
+    //TODO: need to send something to indicate error, and then close connection
     ngx_socks_send(s->connection->write);
 }
 
