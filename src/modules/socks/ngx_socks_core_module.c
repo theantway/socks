@@ -150,12 +150,6 @@ ngx_socks_core_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child) {
 
     ngx_conf_merge_value(conf->so_keepalive, prev->so_keepalive, 0);
 
-    ngx_conf_merge_str_value(conf->server_name, prev->server_name, "");
-
-    if (conf->server_name.len == 0) {
-        conf->server_name = cf->cycle->hostname;
-    }
-
     if (conf->protocol == NULL) {
         ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
                 "unknown protocol(socks4/socks5) for socks server in %s:%ui",
@@ -412,18 +406,6 @@ ngx_socks_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
 #endif
         }
 
-        if (ngx_strcmp(value[i].data, "ssl") == 0) {
-#if (NGX_SOCKS_SSL)
-            ls->ssl = 1;
-            continue;
-#else
-            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                    "the \"ssl\" parameter requires "
-                    "ngx_socks_ssl_module");
-            return NGX_CONF_ERROR;
-#endif
-        }
-
         if (ngx_strncmp(value[i].data, "so_keepalive=", 13) == 0) {
 
             if (ngx_strcmp(&value[i].data[13], "on") == 0) {
@@ -570,30 +552,6 @@ ngx_socks_core_resolver(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
     cscf->resolver = ngx_resolver_create(cf, &value[1], cf->args->nelts - 1);
     if (cscf->resolver == NULL) {
         return NGX_CONF_ERROR;
-    }
-
-    return NGX_CONF_OK;
-}
-
-char *
-ngx_socks_capabilities(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
-    char *p = conf;
-
-    ngx_str_t *c, *value;
-    ngx_uint_t i;
-    ngx_array_t *a;
-
-    a = (ngx_array_t *) (p + cmd->offset);
-
-    value = cf->args->elts;
-
-    for (i = 1; i < cf->args->nelts; i++) {
-        c = ngx_array_push(a);
-        if (c == NULL) {
-            return NGX_CONF_ERROR;
-        }
-
-        *c = value[i];
     }
 
     return NGX_CONF_OK;

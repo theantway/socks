@@ -83,9 +83,6 @@ found:
     addr->tcp_keepintvl = listen->tcp_keepintvl;
     addr->tcp_keepcnt = listen->tcp_keepcnt;
 #endif
-#if (NGX_MAIL_SSL)
-    addr->ssl = listen->ssl;
-#endif
 #if (NGX_HAVE_INET6 && defined IPV6_V6ONLY)
     addr->ipv6only = listen->ipv6only;
 #endif
@@ -216,9 +213,6 @@ static ngx_int_t ngx_socks_add_addrs(ngx_conf_t *cf, ngx_socks_port_t *mport, ng
         addrs[i].addr = sin->sin_addr.s_addr;
 
         addrs[i].conf.ctx = addr[i].ctx;
-#if (NGX_MAIL_SSL)
-        addrs[i].conf.ssl = addr[i].ssl;
-#endif
 
         len = ngx_sock_ntop(addr[i].sockaddr, buf, NGX_SOCKADDR_STRLEN, 1);
 
@@ -260,9 +254,6 @@ static ngx_int_t ngx_socks_add_addrs6(ngx_conf_t *cf, ngx_socks_port_t *mport, n
         addrs6[i].addr6 = sin6->sin6_addr;
 
         addrs6[i].conf.ctx = addr[i].ctx;
-#if (NGX_MAIL_SSL)
-        addrs6[i].conf.ssl = addr[i].ssl;
-#endif
 
         len = ngx_sock_ntop(addr[i].sockaddr, buf, NGX_SOCKADDR_STRLEN, 1);
 

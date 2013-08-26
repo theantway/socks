@@ -27,7 +27,7 @@ void ngx_socks_v5_init_session(ngx_socks_session_t *s, ngx_connection_t *c) {
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
     sscf = ngx_socks_get_module_srv_conf(s, ngx_socks_v5_module);
 
-    timeout = sscf->greeting_delay ? sscf->greeting_delay : cscf->timeout;
+    timeout = cscf->timeout;
     ngx_add_timer(c->read, timeout);
 
     if (ngx_handle_read_event(c->read, 0) != NGX_OK) {
@@ -73,10 +73,10 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
     c = s->connection;
 
     if (ctx->state) {
-        ngx_log_error(NGX_LOG_ERR, c->log, 0,
-                "\"%V\" could not be resolved (%i: %s)",
-                &s->host, ctx->state,
-                ngx_resolver_strerror(ctx->state));
+        ngx_log_error(NGX_LOG_ERR, c->log, 0, "\"%V\" could not be resolved (%i: %s)",
+                &s->host, ctx->state, ngx_resolver_strerror(ctx->state));
+        ngx_resolve_name_done(ctx);
+        s->resolver_ctx = NULL;
         ngx_socks_proxy_close_session(s);
     } else {
         /* AF_INET only */
@@ -91,12 +91,12 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
                     ntohl(addr) & 0xff);
         }
 
+        ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0, "socks resolve name done in handler session: %p, ctx: %p", s, ctx);
+        ngx_resolve_name_done(ctx);
+        s->resolver_ctx = NULL;
+
         ngx_socks_v5_connect_upstream(s, c, AF_INET, (struct in_addr*) &addr, s->port);
     }
-
-    ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0, "socks resolve name done in handler session: %p, ctx: %p", s, ctx);
-    ngx_resolve_name_done(ctx);
-    s->resolver_ctx = NULL;
 }
 
 void
@@ -201,11 +201,9 @@ ngx_int_t ngx_socks_v5_response_auth_methods(ngx_socks_session_t *s) {
             if (*(s->buffer->pos + 2 + method) == supported_auth_methods[nmethod]) {
                 ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0, "Using auth method: '%*s'", 2, char2hex(supported_auth_methods[nmethod], hexMethod));
                 
-                s->auth_method = supported_auth_methods[nmethod];
-                
                 ngx_socks_auth_method_response_t* response = (ngx_socks_auth_method_response_t*)s->out_buffer->pos;
                 response->version = 0x05;
-                response->method = s->auth_method;
+                response->method = supported_auth_methods[nmethod];
                 
                 s->out_buffer->last += sizeof (ngx_socks_auth_method_response_t); 
                 

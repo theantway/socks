@@ -30,9 +30,6 @@ typedef struct {
 
     unsigned bind : 1;
     unsigned wildcard : 1;
-#if (NGX_SOCKS_SSL)
-    unsigned ssl : 1;
-#endif
 #if (NGX_HAVE_INET6 && defined IPV6_V6ONLY)
     unsigned ipv6only : 1;
 #endif
@@ -47,9 +44,6 @@ typedef struct {
 typedef struct {
     ngx_socks_conf_ctx_t *ctx;
     ngx_str_t addr_text;
-#if (NGX_MAIL_SSL)
-    ngx_uint_t ssl; /* unsigned   ssl:1; */
-#endif
 } ngx_socks_addr_conf_t;
 
 typedef struct {
@@ -81,9 +75,6 @@ typedef struct {
 
     unsigned bind : 1;
     unsigned wildcard : 1;
-#if (NGX_SOCKS_SSL)
-    unsigned ssl : 1;
-#endif
 #if (NGX_HAVE_INET6 && defined IPV6_V6ONLY)
     unsigned ipv6only : 1;
 #endif
@@ -189,10 +180,8 @@ typedef struct {
     void **ctx;
     void **main_conf;
     void **srv_conf;
-//    ngx_pool_t *pool;
 
     ngx_resolver_ctx_t *resolver_ctx;
-
     ngx_socks_proxy_ctx_t *proxy;
 
     ngx_uint_t socks_state;
@@ -201,18 +190,11 @@ typedef struct {
     unsigned protocol : 3;
     unsigned blocked : 1;
     unsigned quit : 1;
-    unsigned starttls : 1;
     
     unsigned auth_wait : 1;
 
-    u_char auth_method;
-    ngx_str_t login;
-    ngx_str_t passwd;
-
     ngx_str_t *addr_text;
     ngx_str_t host;
-
-    ngx_uint_t login_attempt;
 
     unsigned short port;
 } ngx_socks_session_t;
