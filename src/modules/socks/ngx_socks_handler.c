@@ -94,22 +94,24 @@ void ngx_socks_init_connection(ngx_connection_t *c) {
 
     s = ngx_pcalloc(c->pool, sizeof (ngx_socks_session_t));
     if (s == NULL) {
+        ngx_log_error(NGX_LOG_ERR, c->log, 0, "SOCKS: Could not alloc memory for session, closing connection");
+        
         ngx_socks_close_connection(c);
         return;
     }
 
     s->main_conf = addr_conf->ctx->main_conf;
     s->srv_conf = addr_conf->ctx->srv_conf;
-    s->addr_text = &addr_conf->addr_text;
 
     c->data = s;
     s->connection = c;
 
-    ngx_log_error(NGX_LOG_INFO, c->log, 0, "*%ui client %V connected to %V",
-            c->number, &c->addr_text, s->addr_text);
+    ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0, "client connected, connection: %p session: %p", c, s);
 
     ctx = ngx_palloc(c->pool, sizeof (ngx_socks_log_ctx_t));
     if (ctx == NULL) {
+        ngx_log_error(NGX_LOG_ERR, c->log, 0, "SOCKS: Could not alloc memory for log context, closing connection");
+        
         ngx_socks_close_connection(c);
         return;
     }
@@ -120,8 +122,8 @@ void ngx_socks_init_connection(ngx_connection_t *c) {
     c->log->connection = c->number;
     c->log->handler = ngx_socks_log_error;
     c->log->data = ctx;
-    c->log->log_level = NGX_LOG_DEBUG_CORE | NGX_LOG_DEBUG_SOCKS;
-    
+    c->log->log_level = NGX_LOG_DEBUG_CORE | NGX_LOG_DEBUG_SOCKS | NGX_LOG_DEBUG_ALLOC;
+
     c->log_error = NGX_ERROR_INFO;
 
     ngx_socks_init_session(c);
@@ -140,6 +142,8 @@ ngx_socks_init_session(ngx_connection_t *c) {
 
     s->ctx = ngx_pcalloc(c->pool, sizeof (void *) * ngx_socks_max_module);
     if (s->ctx == NULL) {
+        ngx_log_error(NGX_LOG_ERR, c->log, 0, "SOCKS: Could not alloc memory for socks modules");
+        
         ngx_socks_session_internal_server_error(s);
         return;
     }
@@ -167,6 +171,7 @@ void ngx_socks_send(ngx_event_t *wev) {
 
     if (s->out_buffer->last == s->out_buffer->pos) {
         if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
+            ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "handle write event failed when nothing to send");
             ngx_socks_proxy_close_session(s);
         }
 
@@ -190,6 +195,7 @@ void ngx_socks_send(ngx_event_t *wev) {
     }
 
     if (s->quit) {
+        ngx_log_debug(NGX_LOG_DEBUG_SOCKS, c->log, 0, "SOCKS: close connection because the session has quit flag");
         ngx_socks_proxy_close_session(s);
         return;
     }
@@ -199,6 +205,7 @@ void ngx_socks_send(ngx_event_t *wev) {
     }
 
     if (n == NGX_ERROR) {
+        ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "SOCKS: failed to send response, closing session");
         ngx_socks_proxy_close_session(s);
         return;
     }
@@ -210,6 +217,7 @@ void ngx_socks_send(ngx_event_t *wev) {
     ngx_add_timer(c->write, cscf->timeout);
 
     if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
+        ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "handle write event failed after send");
         ngx_socks_proxy_close_session(s);
         return;
     }
@@ -221,6 +229,7 @@ ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
     n = c->recv(c, s->buffer->last, s->buffer->end - s->buffer->last);
 
     if (n == NGX_ERROR || n == 0) {
+        ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "failed to recv, closing session");
         ngx_socks_proxy_close_session(s);
         return NGX_ERROR;
     }
@@ -231,6 +240,7 @@ ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
 
     if (n == NGX_AGAIN) {
         if (ngx_handle_read_event(c->read, 0) != NGX_OK) {
+            ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "failed to handle read event, closing session");
             ngx_socks_session_internal_server_error(s);
             return NGX_ERROR;
         }
@@ -253,22 +263,24 @@ void ngx_socks_session_internal_server_error(ngx_socks_session_t *s) {
 }
 
 void ngx_socks_proxy_close_session(ngx_socks_session_t *s) {
+    ngx_connection_t *c = s->connection;
+    
     if (s->proxy && s->proxy->upstream.connection) {
-        ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, s->connection->log, 0,
-                "close socks proxy connection: %d",
-                s->proxy->upstream.connection->fd);
-
+        ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
+                "close socks proxy connection: %d", s->proxy->upstream.connection->fd);
         ngx_close_connection(s->proxy->upstream.connection);
     }
 
-    ngx_socks_close_connection(s->connection);
+    ngx_pfree(s->connection->pool, s);
+    
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0, "close socks client connection: %d", c->fd);
+    ngx_socks_close_connection(c);
 }
 
 void ngx_socks_close_connection(ngx_connection_t *c) {
     ngx_pool_t *pool;
 
-    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0,
-            "close socks connection: %d", c->fd);
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0, "close socks connection: %d", c->fd);
 
     c->destroyed = 1;
 

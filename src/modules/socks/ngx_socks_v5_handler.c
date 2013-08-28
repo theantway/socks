@@ -32,6 +32,7 @@ void ngx_socks_v5_init_session(ngx_socks_session_t *s, ngx_connection_t *c) {
 
     if (ngx_handle_read_event(c->read, 0) != NGX_OK) {
         ngx_socks_proxy_close_session(s);
+        return;
     }
 
     c->read->handler = ngx_socks_v5_init_protocol;
@@ -59,6 +60,7 @@ static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *
     
     if (ngx_resolve_name(ctx) != NGX_OK) {
         ngx_socks_proxy_close_session(s);
+        return;
     }
     s->resolver_ctx = ctx;
 }
@@ -136,17 +138,15 @@ static ngx_int_t ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connecti
 
     ngx_log_error(NGX_LOG_ERR, c->log, 0, "create buffer for %s", buf_type);
     
-    if(*buf == NULL) {
-        sscf = ngx_socks_get_module_srv_conf(s, ngx_socks_v5_module);
+    sscf = ngx_socks_get_module_srv_conf(s, ngx_socks_v5_module);
 
-        *buf = ngx_create_temp_buf(c->pool, sscf->client_buffer_size);
-        
-        if(*buf == NULL) {
-            ngx_log_error(NGX_LOG_ERR, c->log, 0, "Could not create buffer for %s", buf_type);
-            ngx_socks_session_internal_server_error(s);
-            
-            return NGX_ERROR;
-        }
+    *buf = ngx_create_temp_buf(c->pool, sscf->client_buffer_size);
+
+    if(*buf == NULL) {
+        ngx_log_error(NGX_LOG_ERR, c->log, 0, "Could not create buffer for %s", buf_type);
+        ngx_socks_session_internal_server_error(s);
+
+        return NGX_ERROR;
     }
     
     return NGX_OK;
@@ -357,9 +357,9 @@ static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_conne
     ngx_memzero(&inaddr6, sizeof (struct in6_addr));
 #endif
 
-    ngx_addr_t *peer = ngx_pcalloc(s->connection->pool, sizeof (ngx_addr_t));
+    ngx_addr_t *peer = ngx_pcalloc(c->pool, sizeof (ngx_addr_t));
     if (peer == NULL) {
-        ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "could not allocate memory for peer address");
+        ngx_log_error(NGX_LOG_ERR, c->log, 0, "could not allocate memory for peer address");
         ngx_socks_session_internal_server_error(s);
         return NGX_ERROR;
     }
@@ -372,6 +372,8 @@ static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_conne
             const char* converted = inet_ntop(family, &inaddr, (char*) dest_address, INET_ADDRSTRLEN);
             if (converted == NULL) {
                 ngx_log_error(NGX_LOG_ERR, c->log, 0, "could not convert, errno: %d", errno);
+                ngx_socks_close_connection(c);
+                return NGX_ERROR;
             }
             ip_address_len = strlen(converted);
             s->host.data = ngx_pstrdup_n(c->pool, dest_address, ip_address_len);
@@ -387,6 +389,8 @@ static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_conne
 
     peer->sockaddr = ngx_pcalloc(c->pool, len);
     if (peer->sockaddr == NULL) {
+        ngx_log_error(NGX_LOG_ERR, c->log, 0, "SOCKS: Could not alloc memory for peer sockaddr");
+        
         return NGX_ERROR;
     }
 
