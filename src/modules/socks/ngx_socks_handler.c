@@ -4,8 +4,10 @@
 #include "ngx_socks.h"
 
 static void ngx_socks_init_session(ngx_connection_t *c, ngx_socks_conf_ctx_t* config_ctx);
+static u_char* ngx_socks_log_handler(ngx_log_t *log, u_char *buf, size_t len);
 
-void ngx_socks_init_connection(ngx_connection_t *c) {
+void 
+ngx_socks_init_connection(ngx_connection_t *c) {
     ngx_uint_t i;
     ngx_socks_port_t *port;
     struct sockaddr *sa;
@@ -146,7 +148,8 @@ ngx_socks_init_session(ngx_connection_t *c, ngx_socks_conf_ctx_t* config_ctx) {
     cscf->protocol->init_session(s, c);
 }
 
-void ngx_socks_send(ngx_event_t *wev) {
+void 
+ngx_socks_send(ngx_event_t *wev) {
     ngx_int_t n;
     ngx_buf_t * buf;
     ngx_connection_t *c;
@@ -221,7 +224,8 @@ void ngx_socks_send(ngx_event_t *wev) {
     }
 }
 
-ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
+ngx_int_t 
+ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c) {
     ssize_t n;
 
     n = c->recv(c, s->buffer->last, s->buffer->end - s->buffer->last);
@@ -272,7 +276,8 @@ ngx_socks_server_error(ngx_socks_session_t *s, ngx_err_t err, char* fmt, ...) {
     ngx_socks_send(s->connection->write);
 }
 
-void ngx_socks_proxy_close_session(ngx_socks_session_t *s) {
+void 
+ngx_socks_proxy_close_session(ngx_socks_session_t *s) {
     ngx_connection_t *c = s->connection;
     
     if(s->resolver_ctx != NULL) {
@@ -290,7 +295,8 @@ void ngx_socks_proxy_close_session(ngx_socks_session_t *s) {
     ngx_socks_close_connection(c);
 }
 
-void ngx_socks_close_connection(ngx_connection_t *c) {
+void 
+ngx_socks_close_connection(ngx_connection_t *c) {
     ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, 0, "close socks client connection: %d", c->fd);
 
     c->destroyed = 1;
@@ -300,7 +306,8 @@ void ngx_socks_close_connection(ngx_connection_t *c) {
     ngx_destroy_pool(c->pool);
 }
 
-u_char* ngx_socks_log_handler(ngx_log_t *log, u_char *buf, size_t len) {
+static u_char* 
+ngx_socks_log_handler(ngx_log_t *log, u_char *buf, size_t len) {
     u_char *p;
     ngx_socks_session_t *s;
     ngx_socks_log_ctx_t *ctx;

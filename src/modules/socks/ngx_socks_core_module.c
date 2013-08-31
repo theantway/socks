@@ -349,6 +349,7 @@ ngx_socks_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
                 continue;
             }
 
+            //TODO: what's this mean?
             for (i = 0; module->protocol->port[i]; i++) {
                 if (module->protocol->port[i] == u.port) {
                     cscf->protocol = module->protocol;

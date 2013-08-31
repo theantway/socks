@@ -13,8 +13,6 @@ static ngx_socks_protocol_t ngx_socks_v5_protocol = {
     NGX_SOCKS_V5,
 
     ngx_socks_v5_init_session,
-
-    ngx_string("SOCKS5: Internal server error" CRLF)
 };
 
 static ngx_command_t ngx_socks_v5_commands[] = {
