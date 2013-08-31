@@ -554,5 +554,6 @@ ngx_socks_core_resolver(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
         return NGX_CONF_ERROR;
     }
 
+    cscf->resolver->log->log_level = NGX_LOG_DEBUG_CORE;
     return NGX_CONF_OK;
 }

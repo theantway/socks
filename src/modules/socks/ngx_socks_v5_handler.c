@@ -57,12 +57,14 @@ static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *
     ctx->handler = ngx_socks_v5_resolve_name_handler;
     ctx->data = s;
     ctx->timeout = cscf->resolver_timeout;
+    s->resolver_ctx = ctx;
     
     if (ngx_resolve_name(ctx) != NGX_OK) {
+        s->resolver_ctx = NULL;
+        ngx_log_error(NGX_LOG_ERR, c->log, 0, "\"%V\" could not be resolved", &name);
         ngx_socks_proxy_close_session(s);
         return;
-    }
-    s->resolver_ctx = ctx;
+    }    
 }
 
 static void
@@ -74,7 +76,7 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
     s = ctx->data;
     c = s->connection;
 
-    if (ctx->state) {
+    if (ctx->state || ctx->naddrs <= 0) {
         ngx_log_error(NGX_LOG_ERR, c->log, 0, "\"%V\" could not be resolved (%i: %s)",
                 &s->host, ctx->state, ngx_resolver_strerror(ctx->state));
         ngx_resolve_name_done(ctx);
@@ -82,16 +84,14 @@ ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx) {
         ngx_socks_proxy_close_session(s);
     } else {
         /* AF_INET only */
-        if (ctx->naddrs > 0) {
-            addr = ctx->addrs[0];
-            ngx_log_debug5(NGX_LOG_DEBUG_SOCKS, c->log, 0, 
-                    "name '%V' was resolved to %ud.%ud.%ud.%ud",
-                    &s->host,
-                    (ntohl(addr) >> 24) & 0xff,
-                    (ntohl(addr) >> 16) & 0xff,
-                    (ntohl(addr) >> 8) & 0xff,
-                    ntohl(addr) & 0xff);
-        }
+        addr = ctx->addrs[0];
+        ngx_log_debug5(NGX_LOG_DEBUG_SOCKS, c->log, 0, 
+                "name '%V' was resolved to %ud.%ud.%ud.%ud",
+                &s->host,
+                (ntohl(addr) >> 24) & 0xff,
+                (ntohl(addr) >> 16) & 0xff,
+                (ntohl(addr) >> 8) & 0xff,
+                ntohl(addr) & 0xff);
 
         ngx_log_debug2(NGX_LOG_DEBUG_SOCKS, c->log, 0, "socks resolve name done in handler session: %p, ctx: %p", s, ctx);
         ngx_resolve_name_done(ctx);
@@ -143,8 +143,7 @@ static ngx_int_t ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connecti
     *buf = ngx_create_temp_buf(c->pool, sscf->client_buffer_size);
 
     if(*buf == NULL) {
-        ngx_log_error(NGX_LOG_ERR, c->log, 0, "Could not create buffer for %s", buf_type);
-        ngx_socks_session_internal_server_error(s);
+        ngx_socks_server_error(s, NGX_ENOMEM, "Could not create buffer for %s", buf_type);
 
         return NGX_ERROR;
     }
@@ -359,8 +358,7 @@ static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_conne
 
     ngx_addr_t *peer = ngx_pcalloc(c->pool, sizeof (ngx_addr_t));
     if (peer == NULL) {
-        ngx_log_error(NGX_LOG_ERR, c->log, 0, "could not allocate memory for peer address");
-        ngx_socks_session_internal_server_error(s);
+        ngx_socks_server_error(s, NGX_ENOMEM, "could not allocate memory for peer address");
         return NGX_ERROR;
     }
 
@@ -389,7 +387,7 @@ static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_conne
 
     peer->sockaddr = ngx_pcalloc(c->pool, len);
     if (peer->sockaddr == NULL) {
-        ngx_log_error(NGX_LOG_ERR, c->log, 0, "SOCKS: Could not alloc memory for peer sockaddr");
+        ngx_socks_server_error(s, NGX_ENOMEM, "SOCKS: Could not alloc memory for peer sockaddr");
         
         return NGX_ERROR;
     }
@@ -418,8 +416,7 @@ static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_conne
     }
 
     if (rc != NGX_OK) {
-        ngx_log_error(NGX_LOG_ERR, s->connection->log, 0, "Could not parse IPV4 address.");
-        ngx_socks_session_internal_server_error(s);
+        ngx_socks_server_error(s, NGX_EINVAL, "Could not parse IPV4 address.");
         return rc;
     }
 
@@ -431,7 +428,7 @@ static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx
 
     ngx_socks_proxy_ctx_t *proxy = ngx_pcalloc(s->connection->pool, sizeof (*proxy));
     if (proxy == NULL) {
-        ngx_socks_session_internal_server_error(s);
+        ngx_socks_server_error(s, NGX_ENOMEM, "Could not create buffer for upstream context");
         return NGX_ERROR;
     }
     proxy->upstream.data = s;
@@ -449,7 +446,7 @@ static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx
     rc = ngx_event_connect_peer(&proxy->upstream);
 
     if (rc == NGX_ERROR || rc == NGX_BUSY || rc == NGX_DECLINED) {
-        ngx_socks_session_internal_server_error(s);
+        ngx_socks_server_error(s, NGX_ECONNREFUSED, "Could not connect to upstream: %V", &peer->name);
         return NGX_ERROR;
     }
 
@@ -689,7 +686,7 @@ void ngx_socks_v5_auth_state(ngx_event_t *rev) {
 
     switch (rc) {
         case NGX_ERROR:
-            ngx_socks_session_internal_server_error(s);
+            ngx_socks_server_error(s, NGX_EINVAL, "Could not process auth method");
             return;
 
         case NGX_SOCKS_PARSE_INVALID_COMMAND:

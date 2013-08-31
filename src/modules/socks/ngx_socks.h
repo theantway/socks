@@ -252,10 +252,10 @@ extern ngx_uint_t ngx_socks_max_module;
 extern ngx_module_t ngx_socks_core_module;
 
 void ngx_socks_close_connection(ngx_connection_t *c);
-u_char* ngx_socks_log_error(ngx_log_t *log, u_char *buf, size_t len);
-void ngx_socks_session_internal_server_error(ngx_socks_session_t *s);
+void ngx_socks_server_error(ngx_socks_session_t *s, ngx_err_t err, char* msg, ...);
 void ngx_socks_proxy_close_session(ngx_socks_session_t *s);
 void ngx_socks_send(ngx_event_t *wev);
+u_char* ngx_socks_log_handler(ngx_log_t *log, u_char *buf, size_t len);
 
 void ngx_socks_init_connection(ngx_connection_t *c);
 ngx_int_t ngx_socks_read_command(ngx_socks_session_t *s, ngx_connection_t *c);
