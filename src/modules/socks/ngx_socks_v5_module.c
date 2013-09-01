@@ -18,9 +18,9 @@ static ngx_socks_protocol_t ngx_socks_v5_protocol = {
 static ngx_command_t ngx_socks_v5_commands[] = {
 
     { ngx_string("v5_client_buffer"),
-        NGX_MAIL_MAIN_CONF | NGX_MAIL_SRV_CONF | NGX_CONF_TAKE1,
+        NGX_SOCKS_MAIN_CONF | NGX_SOCKS_SRV_CONF | NGX_CONF_TAKE1,
         ngx_conf_set_size_slot,
-        NGX_MAIL_SRV_CONF_OFFSET,
+        NGX_SOCKS_SRV_CONF_OFFSET,
         offsetof(ngx_socks_v5_srv_conf_t, client_buffer_size),
         NULL},
 

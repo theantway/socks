@@ -277,6 +277,28 @@ ngx_socks_server_error(ngx_socks_session_t *s, ngx_err_t err, char* fmt, ...) {
 }
 
 void 
+ngx_socks_bad_request(ngx_socks_session_t *s, ngx_err_t err, char* msg, ...) {
+    ngx_socks_core_srv_conf_t *cscf;
+    ngx_connection_t *c;
+    va_list args;
+    
+    c = s->connection;
+    cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
+    
+    va_start(args, msg);
+    ngx_log_debug1(NGX_LOG_DEBUG_SOCKS, c->log, err, msg, args);
+    va_end(args);
+    
+    *(s->out_buffer->pos) = 0xFF;
+    s->out_buffer->last ++;
+
+    //we should close the connection after send the error response
+    s->quit = 1;
+    
+    ngx_socks_send(s->connection->write);
+}
+
+void 
 ngx_socks_proxy_close_session(ngx_socks_session_t *s) {
     ngx_connection_t *c = s->connection;
     

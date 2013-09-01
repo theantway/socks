@@ -125,6 +125,7 @@ typedef struct {
 
 typedef enum {
     ngx_socks_state_start = 0,
+    ngx_socks_state_auth,
     ngx_socks_state_auth_login_username,
     ngx_socks_state_auth_login_password,
     ngx_socks_state_auth_plain,
@@ -251,6 +252,7 @@ extern ngx_module_t ngx_socks_core_module;
 
 void ngx_socks_close_connection(ngx_connection_t *c);
 void ngx_socks_server_error(ngx_socks_session_t *s, ngx_err_t err, char* msg, ...);
+void ngx_socks_bad_request(ngx_socks_session_t *s, ngx_err_t err, char* msg, ...);
 void ngx_socks_proxy_close_session(ngx_socks_session_t *s);
 void ngx_socks_send(ngx_event_t *wev);
 void ngx_socks_init_connection(ngx_connection_t *c);
