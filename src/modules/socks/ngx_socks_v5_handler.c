@@ -10,14 +10,16 @@ static void ngx_socks_v5_auth(ngx_event_t *rev);
 static void ngx_socks_v5_request(ngx_event_t *rev);
 static void ngx_socks_v5_pass_through(ngx_event_t *rev);
 
-static void ngx_socks_proxy_block_read(ngx_event_t *rev);
-static void ngx_socks_proxy_connected(ngx_event_t *rev);
-static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx_connection_t *c, ngx_addr_t *peer);
+static u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size);
+static ngx_int_t ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c, ngx_buf_t **buf, char* buf_type);
+
 static void ngx_socks_v5_resolve_name(ngx_socks_session_t *s, ngx_connection_t *c, u_char *name, size_t len);
 static void ngx_socks_v5_resolve_name_handler(ngx_resolver_ctx_t *ctx);
-static ngx_int_t ngx_socks_v5_create_buffer(ngx_socks_session_t *s, ngx_connection_t *c, ngx_buf_t **buf, char* buf_type);
-static u_char *ngx_pstrdup_n(ngx_pool_t *pool, u_char *src, ngx_int_t size);
+
 static ngx_int_t ngx_socks_v5_connect_upstream(ngx_socks_session_t *s, ngx_connection_t *c, ngx_int_t family, void* address, short port);
+static ngx_int_t ngx_socks_v5_connect_requested_host(ngx_socks_session_t *s, ngx_connection_t *c, ngx_addr_t *peer);
+static void ngx_socks_proxy_connected(ngx_event_t *rev);
+static void ngx_socks_proxy_block_read(ngx_event_t *rev);
 
 static ngx_socks_auth_method_response_t no_auth = {0x05, 0x00};
 static ngx_socks_auth_method_response_t no_supported_methods = {0x05, 0xFF};
@@ -34,7 +36,9 @@ ngx_socks_v5_init_session(ngx_socks_session_t *s, ngx_connection_t *c) {
 
     cscf = ngx_socks_get_module_srv_conf(s, ngx_socks_core_module);
     sscf = ngx_socks_get_module_srv_conf(s, ngx_socks_v5_module);
-
+    
+    //TODO: start to init ssl if sscf->ssl is on, and use sscf->ssl_timeout for client read timeout.
+    
     timeout = cscf->timeout;
     ngx_add_timer(c->read, timeout);
 
