@@ -266,10 +266,6 @@ ngx_socks_server_error(ngx_socks_session_t *s, ngx_err_t err, char* fmt, ...) {
     ngx_log_error(NGX_LOG_ERR, c->log, err, fmt, args);
     va_end(args);
     
-    //anything not 0x04, 0x05 indicates an error
-    *(s->out_buffer->pos) = 0xFF;
-    s->out_buffer->last ++;
-
     //we should close the connection after send the error response
     s->quit = 1;
     
